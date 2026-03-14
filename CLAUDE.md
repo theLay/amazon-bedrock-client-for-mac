@@ -68,6 +68,34 @@ Handled by separate services: `ImageGenerationService` (Nova Canvas, Titan Image
 ### Swift concurrency
 The project uses Swift 6 strict concurrency. Most manager classes are `@MainActor`. The `Backend` and `Message` types are `@unchecked Sendable`.
 
+## Adding a New Model
+
+**Model list** is fetched dynamically via `listFoundationModels()` + `listInferenceProfiles()` API at startup — new models appear automatically in the UI as soon as they are activated in the user's AWS account.
+
+**Model behavior** (inference parameters, capability flags) is hardcoded. When a new model is added to Bedrock and needs correct behavior, update these locations:
+
+### 1. `Managers/BedrockClient.swift`
+
+- **`ModelType` enum** – add the new case (e.g. `claudeSonnet46`)
+- **`getModelType()`** – add detection logic. Important: more specific patterns (e.g. `claude-sonnet-4-6`) must come **before** less specific ones (e.g. `claude-sonnet-4`) to avoid mismatches
+- **`isClaude45OrLater()`** – add if the model only supports `temperature` (not `top_p`). Applies to all Anthropic models from 4.5 onwards
+- **`getDefaultInferenceConfig()`** – add default `InferenceConfiguration`. Models that only support temperature must NOT include `topp`
+- **Capability switch statements** – add the new case to whichever apply:
+  - `isReasoningSupported()` – supports extended thinking / reasoning
+  - `isStreamingToolUseSupported()` – supports streaming tool use
+  - `supportsPromptCaching()` – supports prompt caching
+  - `supportsDocumentChat()` – supports document uploads
+  - `supportsSystemPrompt()` – supports system prompts
+  - `supportsVision()` – supports image input
+
+### 2. `Managers/ModelInferenceConfig.swift`
+
+- **`getModelTypeFromId()`** – same detection logic as `BedrockClient.swift` (keep in sync)
+- **`getRangeForModel()`** – add `ModelInferenceRange` for the UI sliders (temperature range, maxTokens range, etc.)
+
+### Key constraint: temperature vs top_p
+Some models (all Anthropic 4.5+) reject requests where both `temperature` and `top_p` are set. Always check the model's API docs before setting both. When in doubt, use temperature only.
+
 ## Dependencies
 
 Dependencies are managed as Swift Package Manager packages referenced directly in the Xcode project (no `Package.swift` at root). Key packages:
