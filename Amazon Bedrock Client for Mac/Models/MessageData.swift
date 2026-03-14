@@ -160,6 +160,7 @@ struct MessageData: Identifiable, Equatable, Codable {
     var isError: Bool = false
     let sentTime: Date
     var imageBase64Strings: [String]?
+    var imageFormats: [String]?
     var documentBase64Strings: [String]?
     var documentFormats: [String]?
     var documentNames: [String]?
@@ -179,6 +180,7 @@ struct MessageData: Identifiable, Equatable, Codable {
         case isError = "is_error"
         case sentTime = "sent_time"
         case imageBase64Strings = "image_base64_strings"
+        case imageFormats = "image_formats"
         case documentBase64Strings = "document_base64_strings"
         case documentFormats = "document_formats"
         case documentNames = "document_names"
