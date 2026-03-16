@@ -18,11 +18,11 @@ jobs:
     - name: Checkout Repository
       uses: actions/checkout@v4
 
-    # Set the build number using the first 8 characters of the commit SHA
-    - name: Set Build Number from Commit SHA
+    # Set the build number using the build date (YYYYMMDD)
+    - name: Set Build Number from Build Date
       run: |
-        SHORT_SHA=$(echo $GITHUB_SHA | cut -c1-8)
-        /usr/bin/xcrun agvtool new-version -all $SHORT_SHA
+        BUILD_DATE=$(date -u +"%Y%m%d")
+        /usr/bin/xcrun agvtool new-version -all $BUILD_DATE
 
     # Import macOS code-signing certificates
     - name: Import Code-Signing Certificates
