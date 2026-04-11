@@ -36,6 +36,17 @@ xcodebuild test \
 
 The test files live under `Amazon Bedrock Client for Mac/Tests/`. The primary test file is `MCPServerTests.swift`, which tests MCP server connectivity and OAuth metadata discovery.
 
+## Post-Build Review Checklist
+
+After a feature is implemented and the build succeeds, perform the following review before committing:
+
+1. **Bug check** — Look for potential crashes (force unwraps on empty collections, missing nil guards) and logic errors (incomplete equality comparisons, off-by-one)
+2. **Code conventions** — Ensure new code matches existing style:
+   - `/** */` or `///` doc comments on public/internal types and methods
+   - `// MARK: -` section headers where appropriate
+   - Consistent spacing and formatting with surrounding code
+3. **Variable/type naming** — Verify names are consistent with existing patterns in the codebase (e.g. plural array names, matching prefixes)
+
 ## Architecture
 
 ### Layer structure
