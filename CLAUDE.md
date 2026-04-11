@@ -124,3 +124,5 @@ When creating commits, use the following co-author line:
 ```
 Co-Authored-By: Claude <noreply@anthropic.com>
 ```
+
+After merging a feature branch to main, update `CHANGELOG.md` with notable changes only — new features, significant bug fixes, and user-facing improvements. Minor refactors, style fixes, and documentation-only changes do not need to be listed. Include the date (YYYY-MM-DD) for each entry.
