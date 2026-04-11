@@ -396,7 +396,13 @@ struct GeneratedVideoView: View {
     }
 }
 
-// MARK: - ToolUsesView (parallel tool execution display)
+// MARK: - ToolUsesView
+
+/**
+ * Displays one or more tool use blocks with their execution status.
+ * Supports parallel tool execution with per-tool status indicators (running, success, error).
+ * Each tool entry is expandable to show input parameters and result.
+ */
 struct ToolUsesView: View {
     let toolUses: [ToolInfo]
     let toolResults: [ToolResultEntry]?
@@ -405,6 +411,7 @@ struct ToolUsesView: View {
 
     @Environment(\.colorScheme) private var colorScheme: ColorScheme
 
+    /// Returns the SF Symbol name and color for a tool's execution status.
     private func statusIcon(for toolId: String) -> (symbol: String, color: Color) {
         guard let results = toolResults,
               let entry = results.first(where: { $0.toolUseId == toolId }) else {
@@ -418,6 +425,7 @@ struct ToolUsesView: View {
         }
     }
 
+    /// Returns the result text for a completed tool, or nil if still running.
     private func resultText(for toolId: String) -> String? {
         guard let results = toolResults,
               let entry = results.first(where: { $0.toolUseId == toolId }),
@@ -425,10 +433,12 @@ struct ToolUsesView: View {
         return entry.result
     }
 
+    /// Number of tools that have finished execution (success or error).
     private var completedCount: Int {
         toolResults?.filter { $0.status != "running" }.count ?? 0
     }
 
+    /// Header text showing tool count and progress.
     private var headerText: String {
         if toolUses.count == 1 {
             return "Using tool: \(toolUses[0].name)"
@@ -485,10 +495,12 @@ struct ToolUsesView: View {
         )
     }
 
+    /// Formats tool input as a JSON code block for display.
     private func formatInput(_ input: JSONValue) -> String {
         return "```json\n\(prettyPrintJSON(input, indent: 0))\n```"
     }
 
+    /// Recursively pretty-prints a JSONValue with indentation.
     private func prettyPrintJSON(_ json: JSONValue, indent: Int) -> String {
         let indentStr = String(repeating: "  ", count: indent)
         let childIndent = String(repeating: "  ", count: indent + 1)

@@ -674,6 +674,10 @@ class ChatManager: ObservableObject {
         )
     }
 
+    /**
+     * Updates a message with multiple tool use infos and their results.
+     * Used by parallel tool execution to persist all tool data in a single update.
+     */
     func updateMessageWithToolInfos(for chatId: String, messageId: UUID, newText: String, toolInfos: [ToolInfo], toolResultEntries: [ToolResultEntry]? = nil, thinking: String? = nil, thinkingSignature: String? = nil) {
         if var history = getConversationHistory(for: chatId) {
             if let index = history.messages.firstIndex(where: { $0.id == messageId }) {

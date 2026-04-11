@@ -373,76 +373,94 @@ class ChatViewModel: ObservableObject {
         isToolResultModalVisible = true
     }
     
-    // MARK: - Tool Use Tracker (Made Sendable)
-    
+    // MARK: - Tool Use Tracker
+
+    /**
+     * Tracks multiple tool use blocks during streaming.
+     * Supports parallel tool execution by tracking each content block independently.
+     */
     actor ToolUseTracker {
         static let shared = ToolUseTracker()
 
+        /// Represents a single tool use block being accumulated during streaming.
         struct ToolBlock {
             let toolUseId: String
             let name: String
             var inputString: String = ""
         }
 
-        // Track multiple tool blocks by content block index
+        /// Active tool blocks indexed by content block index
         private var blocks: [Int: ToolBlock] = [:]
-        // Completed tools collected during streaming (using Sendable ToolInfo)
+        /// Completed tools collected during streaming
         private var completedTools: [ToolInfo] = []
+        /// Tracks the most recently started block index (for fallback paths)
+        private var currentBlockIndex: Int?
 
+        /// Resets all tracking state for a new conversation turn.
         func reset() {
             blocks.removeAll()
             completedTools.removeAll()
+            currentBlockIndex = nil
         }
 
+        /// Registers a new tool use block at the given content block index.
         func startBlock(index: Int, id: String, name: String) {
             blocks[index] = ToolBlock(toolUseId: id, name: name)
         }
 
+        /// Appends streamed input text to the tool block at the given index.
         func appendToBlock(index: Int, text: String) {
             blocks[index]?.inputString += text
         }
 
+        /// Returns the tool block at the given index, if it exists.
         func getBlock(index: Int) -> ToolBlock? {
             return blocks[index]
         }
 
+        /// Returns whether a tool block exists at the given index.
         func hasBlock(index: Int) -> Bool {
             return blocks[index] != nil
         }
 
+        /// Adds a completed tool to the collection for batch retrieval.
         func addCompletedTool(_ tool: ToolInfo) {
             completedTools.append(tool)
         }
 
+        /// Returns all completed tools collected during streaming.
         func getCompletedTools() -> [ToolInfo] {
             return completedTools
         }
 
+        /// Clears the completed tools collection.
         func clearCompletedTools() {
             completedTools.removeAll()
         }
 
-        // Legacy compat — used by existing single-tool code paths
-        private var currentBlockIndex: Int?
-
+        /// Sets the current block index (used by fallback single-tool paths).
         func setCurrentBlockIndex(_ index: Int) {
             currentBlockIndex = index
         }
 
+        /// Returns the current block index.
         func getCurrentBlockIndex() -> Int? {
             return currentBlockIndex
         }
 
+        /// Returns the tool use ID for the current block.
         func getToolUseId() -> String? {
             guard let idx = currentBlockIndex else { return nil }
             return blocks[idx]?.toolUseId
         }
 
+        /// Returns the tool name for the current block.
         func getToolName() -> String? {
             guard let idx = currentBlockIndex else { return nil }
             return blocks[idx]?.name
         }
 
+        /// Returns the accumulated input string for the current block.
         func getInputString() -> String {
             guard let idx = currentBlockIndex else { return "" }
             return blocks[idx]?.inputString ?? ""
@@ -685,6 +703,12 @@ class ChatViewModel: ObservableObject {
         )
     }
     
+    /**
+     * Parses a raw JSON input string into a dictionary.
+     *
+     * @param inputString The raw JSON string accumulated from streaming chunks
+     * @return Parsed dictionary, or a fallback text wrapper if parsing fails
+     */
     private func parseToolInput(_ inputString: String) -> [String: Any] {
         if inputString.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             return [:]
@@ -702,9 +726,14 @@ class ChatViewModel: ObservableObject {
         return ["text": inputString]
     }
 
-    /// Extracts tool use info from a streaming chunk.
-    /// Returns a single completed tool if `contentblockstop` fires, or nil.
-    /// Also collects completed tools in the tracker for batch retrieval at `messagestop`.
+    /**
+     * Extracts tool use info from a streaming chunk.
+     * Returns a single completed tool if `contentblockstop` fires, or nil.
+     * Also collects completed tools in the tracker for batch retrieval at `messagestop`.
+     *
+     * @param chunk A streaming output chunk from the Bedrock ConverseStream API
+     * @return Tuple of (toolUseId, name, input) if a tool block completed, nil otherwise
+     */
     private func extractToolUseFromChunk(_ chunk: BedrockRuntimeClientTypes.ConverseStreamOutput) async -> (toolUseId: String, name: String, input: [String: Any])? {
         let tracker = ToolUseTracker.shared
 
@@ -772,7 +801,12 @@ class ChatViewModel: ObservableObject {
         return nil
     }
 
-    /// Check if messagestop indicates tool use
+    /**
+     * Checks if a streaming chunk is a messagestop event with tool use reason.
+     *
+     * @param chunk A streaming output chunk
+     * @return True if the chunk signals the end of a tool-use response
+     */
     private func isToolUseStop(_ chunk: BedrockRuntimeClientTypes.ConverseStreamOutput) -> Bool {
         if case .messagestop(let stopEvent) = chunk,
            stopEvent.stopReason == .toolUse {
@@ -905,7 +939,17 @@ class ChatViewModel: ObservableObject {
         try await processToolCycles(bedrockMessages: bedrockMessages, systemContentBlock: systemContentBlock, toolConfig: toolConfig, turnCount: turn_count, maxTurns: maxTurns)
     }
     
-    // Process tool cycles recursively — supports parallel tool execution
+    /**
+     * Processes tool cycles recursively with parallel tool execution support.
+     * Phase 1: Streams all chunks from the model, collecting tool use blocks without executing.
+     * Phase 2: Executes all collected tools in parallel, updates UI per-tool, then recurses.
+     *
+     * @param bedrockMessages The current conversation messages for the API
+     * @param systemContentBlock System prompt content blocks
+     * @param toolConfig Tool configuration for the API request
+     * @param turnCount Current tool cycle turn number
+     * @param maxTurns Maximum allowed tool cycle turns
+     */
     private func processToolCycles(
         bedrockMessages: [AWSBedrockRuntime.BedrockRuntimeClientTypes.Message],
         systemContentBlock: [AWSBedrockRuntime.BedrockRuntimeClientTypes.SystemContentBlock]?,
