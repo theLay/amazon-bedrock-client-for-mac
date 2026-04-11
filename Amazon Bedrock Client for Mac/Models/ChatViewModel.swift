@@ -488,14 +488,18 @@ class ChatViewModel: ObservableObject {
     
     private func createUserMessage() -> MessageData {
         // Process images
+        var imageFormats: [String] = []
         let imageBase64Strings = sharedMediaDataSource.images.enumerated().compactMap { index, image -> String? in
             guard index < sharedMediaDataSource.fileExtensions.count else {
                 logger.error("Missing extension for image at index \(index)")
                 return nil
             }
-            
+
             let fileExtension = sharedMediaDataSource.fileExtensions[index]
             let result = base64EncodeImage(image, withExtension: fileExtension)
+            if result.base64String != nil {
+                imageFormats.append(fileExtension)
+            }
             return result.base64String
         }
         
@@ -587,6 +591,7 @@ class ChatViewModel: ObservableObject {
             isError: false,
             sentTime: Date(),
             imageBase64Strings: imageBase64Strings.isEmpty ? nil : imageBase64Strings,
+            imageFormats: imageFormats.isEmpty ? nil : imageFormats,
             documentBase64Strings: documentBase64Strings.isEmpty ? nil : documentBase64Strings,
             documentFormats: documentFormats.isEmpty ? nil : documentFormats,
             documentNames: documentNames.isEmpty ? nil : documentNames,
@@ -786,9 +791,9 @@ class ChatViewModel: ObservableObject {
         // Add images if present
         if let imageBase64Strings = userMessage.imageBase64Strings, !imageBase64Strings.isEmpty {
             for (index, base64String) in imageBase64Strings.enumerated() {
-                let fileExtension = index < sharedMediaDataSource.fileExtensions.count ?
-                sharedMediaDataSource.fileExtensions[index].lowercased() : "jpeg"
-                
+                let fileExtension = index < (userMessage.imageFormats?.count ?? 0) ?
+                    userMessage.imageFormats![index].lowercased() : "jpeg"
+
                 let format: ImageFormat
                 switch fileExtension {
                 case "jpg", "jpeg": format = .jpeg
@@ -797,7 +802,7 @@ class ChatViewModel: ObservableObject {
                 case "webp": format = .webp
                 default: format = .jpeg
                 }
-                
+
                 messageContents.append(.image(MessageContent.ImageContent(
                     format: format,
                     base64Data: base64String
@@ -1480,14 +1485,24 @@ class ChatViewModel: ObservableObject {
             
             // Add images SECOND (before text) to support prompt caching
             if let imageBase64Strings = message.imageBase64Strings {
-                for base64String in imageBase64Strings {
+                for (index, base64String) in imageBase64Strings.enumerated() {
+                    let fileExtension = index < (message.imageFormats?.count ?? 0) ?
+                        message.imageFormats![index].lowercased() : "jpeg"
+                    let format: ImageFormat
+                    switch fileExtension {
+                    case "jpg", "jpeg": format = .jpeg
+                    case "png": format = .png
+                    case "gif": format = .gif
+                    case "webp": format = .webp
+                    default: format = .jpeg
+                    }
                     contents.append(.image(MessageContent.ImageContent(
-                        format: .jpeg,
+                        format: format,
                         base64Data: base64String
                     )))
                 }
             }
-            
+
             // Handle tool results specially - they should ONLY contain toolresult, no text
             if role == .user, let toolUse = message.toolUse, let toolResult = message.toolResult {
                 // Tool result message - only add toolresult content
@@ -1566,6 +1581,7 @@ class ChatViewModel: ObservableObject {
                 thinkingSummary: messageData.thinkingSummary,
                 thinkingSignature: messageData.signature,
                 imageBase64Strings: messageData.imageBase64Strings,
+                imageFormats: messageData.imageFormats,
                 documentBase64Strings: messageData.documentBase64Strings,
                 documentFormats: messageData.documentFormats,
                 documentNames: messageData.documentNames,
@@ -1620,14 +1636,24 @@ class ChatViewModel: ObservableObject {
             
             // Add images SECOND (before text) to support prompt caching
             if let imageBase64Strings = message.imageBase64Strings {
-                for base64String in imageBase64Strings {
+                for (index, base64String) in imageBase64Strings.enumerated() {
+                    let fileExtension = index < (message.imageFormats?.count ?? 0) ?
+                        message.imageFormats![index].lowercased() : "jpeg"
+                    let format: ImageFormat
+                    switch fileExtension {
+                    case "jpg", "jpeg": format = .jpeg
+                    case "png": format = .png
+                    case "gif": format = .gif
+                    case "webp": format = .webp
+                    default: format = .jpeg
+                    }
                     contents.append(.image(MessageContent.ImageContent(
-                        format: .jpeg,
+                        format: format,
                         base64Data: base64String
                     )))
                 }
             }
-            
+
             // Handle tool results specially - they should ONLY contain toolresult, no text
             if role == .user, let toolUse = message.toolUse, let result = toolUse.result {
                 // Tool result message - only add toolresult content
@@ -2464,6 +2490,7 @@ class ChatViewModel: ObservableObject {
             thinkingSignature: message.signature,
             // Convert base64 images to file references for efficient storage
             imageBase64Strings: convertImagesToReferences(message.imageBase64Strings),
+            imageFormats: message.imageFormats,
             documentBase64Strings: message.documentBase64Strings,
             documentFormats: message.documentFormats,
             documentNames: message.documentNames,
@@ -2697,9 +2724,9 @@ class ChatViewModel: ObservableObject {
         // Add images if present
         if let imageBase64Strings = userMessage.imageBase64Strings, !imageBase64Strings.isEmpty {
             for (index, base64String) in imageBase64Strings.enumerated() {
-                let fileExtension = index < sharedMediaDataSource.fileExtensions.count ?
-                sharedMediaDataSource.fileExtensions[index].lowercased() : "jpeg"
-                
+                let fileExtension = index < (userMessage.imageFormats?.count ?? 0) ?
+                    userMessage.imageFormats![index].lowercased() : "jpeg"
+
                 let format: ImageFormat
                 switch fileExtension {
                 case "jpg", "jpeg": format = .jpeg
@@ -2708,7 +2735,7 @@ class ChatViewModel: ObservableObject {
                 case "webp": format = .webp
                 default: format = .jpeg
                 }
-                
+
                 messageContents.append(.image(MessageContent.ImageContent(
                     format: format,
                     base64Data: base64String

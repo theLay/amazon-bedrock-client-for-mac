@@ -42,6 +42,30 @@ struct ModelInferenceRange {
         let modelType = getModelTypeFromId(modelId)
         
         switch modelType {
+        case .claudeSonnet46:
+            return ModelInferenceRange(
+                maxTokensRange: 1...64000,
+                temperatureRange: 0.0...1.0,
+                topPRange: 0.01...1.0,
+                thinkingBudgetRange: 1024...8192,
+                defaultMaxTokens: 8192,
+                defaultTemperature: 0.9,
+                defaultTopP: 0.7,
+                defaultThinkingBudget: 2048,
+                defaultReasoningEffort: "medium"
+            )
+        case .claudeOpus46:
+            return ModelInferenceRange(
+                maxTokensRange: 1...64000,
+                temperatureRange: 0.0...1.0,
+                topPRange: 0.01...1.0,
+                thinkingBudgetRange: 1024...8192,
+                defaultMaxTokens: 8192,
+                defaultTemperature: 0.9,
+                defaultTopP: 0.7,
+                defaultThinkingBudget: 2048,
+                defaultReasoningEffort: "medium"
+            )
         case .claudeSonnet45:
             // Claude Sonnet 4.5 doesn't support top_p with temperature
             return ModelInferenceRange(
@@ -347,7 +371,11 @@ struct ModelInferenceRange {
         
         switch provider {
         case "anthropic":
-            if modelNameAndVersion.contains("claude-sonnet-4-5") {
+            if modelNameAndVersion.contains("claude-sonnet-4-6") {
+                return .claudeSonnet46
+            } else if modelNameAndVersion.contains("claude-opus-4-6") {
+                return .claudeOpus46
+            } else if modelNameAndVersion.contains("claude-sonnet-4-5") {
                 return .claudeSonnet45
             } else if modelNameAndVersion.contains("claude-haiku-4-5") {
                 return .claudeHaiku45

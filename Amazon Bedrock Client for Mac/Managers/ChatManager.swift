@@ -32,6 +32,7 @@ struct Message: Codable, Identifiable {
     var thinkingSummary: String?  // Summary of thinking process
     var thinkingSignature: String?
     var imageBase64Strings: [String]?
+    var imageFormats: [String]?
     var documentBase64Strings: [String]?
     var documentFormats: [String]?
     var documentNames: [String]?

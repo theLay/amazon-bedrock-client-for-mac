@@ -1020,25 +1020,25 @@ class MCPManager: ObservableObject {
                         "mimeType": mimeType,
                         "size": data.count
                     ]
-                    
+
                     // Add metadata if available
                     if let metadata = metadata {
                         imageResult["metadata"] = metadata
-                        
+
                         // Safely extract width and height
                         var width = 0
                         var height = 0
-                        
+
                         // Safely extract width - metadata values are strings
                         if let widthValue = metadata["width"], let widthInt = Int(widthValue) {
                             width = widthInt
                         }
-                        
+
                         // Safely extract height - metadata values are strings
                         if let heightValue = metadata["height"], let heightInt = Int(heightValue) {
                             height = heightInt
                         }
-                        
+
                         if width > 0 && height > 0 {
                             imageResult["description"] = "Generated \(width)x\(height) image"
                         } else {
@@ -1047,38 +1047,46 @@ class MCPManager: ObservableObject {
                     } else {
                         imageResult["description"] = "Generated image"
                     }
-                    
-                    // Convert image data to base64 for transport
-                    let base64String = try data.base64EncodedString()
-                    imageResult["data"] = base64String
-                    
+
+                    // data is already a base64-encoded string
+                    imageResult["data"] = data
+
                     resultContent.append(imageResult)
-                    
+
                 case .audio(let data, let mimeType):
-                    let base64String = try data.base64EncodedString()
                     resultContent.append([
                         "type": "audio",
                         "mimeType": mimeType,
                         "size": data.count,
-                        "data": base64String,
+                        "data": data,
                         "description": "Generated audio"
                     ])
 
-                case .resource(let uri, let mimeType, let text):
+                case .resource(let resource, _, _):
                     var resourceResult: [String: Any] = [
                         "type": "resource",
-                        "uri": uri,
-                        "mimeType": mimeType
+                        "uri": resource.uri,
+                        "mimeType": resource.mimeType ?? ""
                     ]
-                    
-                    if let text = text {
+
+                    if let text = resource.text {
                         resourceResult["text"] = text
-                        resourceResult["description"] = "Resource from \(uri)"
+                        resourceResult["description"] = "Resource from \(resource.uri)"
                     } else {
-                        resourceResult["description"] = "Resource reference: \(uri)"
+                        resourceResult["description"] = "Resource reference: \(resource.uri)"
                     }
-                    
+
                     resultContent.append(resourceResult)
+
+                case .resourceLink(let uri, let name, _, let description, let mimeType, _):
+                    var linkResult: [String: Any] = [
+                        "type": "resourceLink",
+                        "uri": uri,
+                        "name": name
+                    ]
+                    if let mimeType = mimeType { linkResult["mimeType"] = mimeType }
+                    linkResult["description"] = description ?? "Resource link: \(uri)"
+                    resultContent.append(linkResult)
                 }
             } catch {
                 logger.error("Error processing content item: \(error)")
