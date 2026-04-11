@@ -38,6 +38,7 @@ struct ToolResultEntry: Codable, Equatable {
 
     static func == (lhs: ToolResultEntry, rhs: ToolResultEntry) -> Bool {
         return lhs.toolUseId == rhs.toolUseId &&
+               lhs.toolName == rhs.toolName &&
                lhs.result == rhs.result &&
                lhs.status == rhs.status
     }
@@ -229,7 +230,11 @@ struct MessageData: Identifiable, Equatable, Codable {
         get { toolUses?.first }
         set {
             if let v = newValue {
-                if toolUses != nil { toolUses![0] = v } else { toolUses = [v] }
+                if toolUses != nil, !toolUses!.isEmpty {
+                    toolUses![0] = v
+                } else {
+                    toolUses = [v]
+                }
             } else {
                 toolUses = nil
             }
