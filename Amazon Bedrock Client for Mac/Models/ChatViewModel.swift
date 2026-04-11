@@ -373,50 +373,97 @@ class ChatViewModel: ObservableObject {
         isToolResultModalVisible = true
     }
     
-    // MARK: - Tool Use Tracker (Made Sendable)
-    
+    // MARK: - Tool Use Tracker
+
+    /**
+     * Tracks multiple tool use blocks during streaming.
+     * Supports parallel tool execution by tracking each content block independently.
+     */
     actor ToolUseTracker {
         static let shared = ToolUseTracker()
-        
-        private var toolUseId: String?
-        private var name: String?
-        private var inputString = ""
+
+        /// Represents a single tool use block being accumulated during streaming.
+        struct ToolBlock {
+            let toolUseId: String
+            let name: String
+            var inputString: String = ""
+        }
+
+        /// Active tool blocks indexed by content block index
+        private var blocks: [Int: ToolBlock] = [:]
+        /// Completed tools collected during streaming
+        private var completedTools: [ToolInfo] = []
+        /// Tracks the most recently started block index (for fallback paths)
         private var currentBlockIndex: Int?
-        
+
+        /// Resets all tracking state for a new conversation turn.
         func reset() {
-            toolUseId = nil
-            name = nil
-            inputString = ""
+            blocks.removeAll()
+            completedTools.removeAll()
             currentBlockIndex = nil
         }
-        
+
+        /// Registers a new tool use block at the given content block index.
+        func startBlock(index: Int, id: String, name: String) {
+            blocks[index] = ToolBlock(toolUseId: id, name: name)
+        }
+
+        /// Appends streamed input text to the tool block at the given index.
+        func appendToBlock(index: Int, text: String) {
+            blocks[index]?.inputString += text
+        }
+
+        /// Returns the tool block at the given index, if it exists.
+        func getBlock(index: Int) -> ToolBlock? {
+            return blocks[index]
+        }
+
+        /// Returns whether a tool block exists at the given index.
+        func hasBlock(index: Int) -> Bool {
+            return blocks[index] != nil
+        }
+
+        /// Adds a completed tool to the collection for batch retrieval.
+        func addCompletedTool(_ tool: ToolInfo) {
+            completedTools.append(tool)
+        }
+
+        /// Returns all completed tools collected during streaming.
+        func getCompletedTools() -> [ToolInfo] {
+            return completedTools
+        }
+
+        /// Clears the completed tools collection.
+        func clearCompletedTools() {
+            completedTools.removeAll()
+        }
+
+        /// Sets the current block index (used by fallback single-tool paths).
         func setCurrentBlockIndex(_ index: Int) {
             currentBlockIndex = index
         }
-        
-        func setToolUseInfo(id: String, name: String) {
-            self.toolUseId = id
-            self.name = name
-        }
-        
-        func appendToInputString(_ text: String) {
-            inputString += text
-        }
-        
+
+        /// Returns the current block index.
         func getCurrentBlockIndex() -> Int? {
             return currentBlockIndex
         }
-        
+
+        /// Returns the tool use ID for the current block.
         func getToolUseId() -> String? {
-            return toolUseId
+            guard let idx = currentBlockIndex else { return nil }
+            return blocks[idx]?.toolUseId
         }
-        
+
+        /// Returns the tool name for the current block.
         func getToolName() -> String? {
-            return name
+            guard let idx = currentBlockIndex else { return nil }
+            return blocks[idx]?.name
         }
-        
+
+        /// Returns the accumulated input string for the current block.
         func getInputString() -> String {
-            return inputString
+            guard let idx = currentBlockIndex else { return "" }
+            return blocks[idx]?.inputString ?? ""
         }
     }
     
@@ -656,105 +703,116 @@ class ChatViewModel: ObservableObject {
         )
     }
     
+    /**
+     * Parses a raw JSON input string into a dictionary.
+     *
+     * @param inputString The raw JSON string accumulated from streaming chunks
+     * @return Parsed dictionary, or a fallback text wrapper if parsing fails
+     */
+    private func parseToolInput(_ inputString: String) -> [String: Any] {
+        if inputString.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return [:]
+        }
+        guard let data = inputString.data(using: .utf8) else {
+            return ["text": inputString]
+        }
+        do {
+            if let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                return json
+            } else if let jsonArray = try JSONSerialization.jsonObject(with: data) as? [Any] {
+                return ["array": jsonArray]
+            }
+        } catch {}
+        return ["text": inputString]
+    }
+
+    /**
+     * Extracts tool use info from a streaming chunk.
+     * Returns a single completed tool if `contentblockstop` fires, or nil.
+     * Also collects completed tools in the tracker for batch retrieval at `messagestop`.
+     *
+     * @param chunk A streaming output chunk from the Bedrock ConverseStream API
+     * @return Tuple of (toolUseId, name, input) if a tool block completed, nil otherwise
+     */
     private func extractToolUseFromChunk(_ chunk: BedrockRuntimeClientTypes.ConverseStreamOutput) async -> (toolUseId: String, name: String, input: [String: Any])? {
         let tracker = ToolUseTracker.shared
-        
+
+        // --- Block start: register new tool block ---
         if case .contentblockstart(let blockStartEvent) = chunk,
            let start = blockStartEvent.start,
            case .tooluse(let toolUseBlockStart) = start,
            let contentBlockIndex = blockStartEvent.contentBlockIndex {
-            
+
             guard let toolUseId = toolUseBlockStart.toolUseId,
                   let name = toolUseBlockStart.name else {
                 logger.warning("Received incomplete tool use block start")
                 return nil
             }
-            
-            await tracker.reset()
+
+            await tracker.startBlock(index: contentBlockIndex, id: toolUseId, name: name)
             await tracker.setCurrentBlockIndex(contentBlockIndex)
-            await tracker.setToolUseInfo(id: toolUseId, name: name)
-            
             logger.info("Tool use start detected: \(name) with ID: \(toolUseId)")
             return nil
         }
 
+        // --- Block delta: accumulate input ---
         if case .contentblockdelta(let deltaEvent) = chunk,
-           let delta = deltaEvent.delta {
-            
-            let currentBlockIndex = await tracker.getCurrentBlockIndex()
-            
-            if currentBlockIndex == deltaEvent.contentBlockIndex,
+           let delta = deltaEvent.delta,
+           let blockIndex = deltaEvent.contentBlockIndex {
+
+            if await tracker.hasBlock(index: blockIndex),
                case .tooluse(let toolUseDelta) = delta,
                let inputStr = toolUseDelta.input {
-                
-                await tracker.appendToInputString(inputStr)
-                logger.info("Accumulated tool input: \(inputStr)")
+                await tracker.appendToBlock(index: blockIndex, text: inputStr)
             }
             return nil
         }
-        
-        if case .contentblockstop(let stopEvent) = chunk {
-            let currentBlockIndex = await tracker.getCurrentBlockIndex()
-            
-            if currentBlockIndex == stopEvent.contentBlockIndex,
-               let toolUseId = await tracker.getToolUseId(),
+
+        // --- Block stop: complete one tool block, collect it ---
+        if case .contentblockstop(let stopEvent) = chunk,
+           let blockIndex = stopEvent.contentBlockIndex,
+           let block = await tracker.getBlock(index: blockIndex) {
+
+            let inputDict = parseToolInput(block.inputString)
+            let toolInfo = ToolInfo(id: block.toolUseId, name: block.name, input: JSONValue.from(inputDict))
+            await tracker.addCompletedTool(toolInfo)
+            logger.info("Tool use block completed for \(block.name). Input: \(inputDict)")
+            return (toolUseId: block.toolUseId, name: block.name, input: inputDict)
+        }
+
+        // --- Message stop with toolUse reason ---
+        if case .messagestop(let stopEvent) = chunk,
+           stopEvent.stopReason == .toolUse {
+            let completed = await tracker.getCompletedTools()
+            if !completed.isEmpty {
+                logger.info("messagestop with \(completed.count) tool(s) collected")
+                return nil
+            }
+            // Fallback: try current block
+            if let toolUseId = await tracker.getToolUseId(),
                let name = await tracker.getToolName() {
-                
                 let inputString = await tracker.getInputString()
-                
-                var inputDict: [String: Any] = [:]
-                
-                if inputString.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    inputDict = [:]
-                } else if let data = inputString.data(using: .utf8) {
-                    do {
-                        if let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] {
-                            inputDict = json
-                        } else if let jsonArray = try JSONSerialization.jsonObject(with: data) as? [Any] {
-                            inputDict = ["array": jsonArray]
-                        }
-                    } catch {
-                        inputDict = ["text": inputString]
-                    }
-                } else {
-                    inputDict = ["text": inputString]
-                }
-                
-                logger.info("Tool use block completed for \(name). Input: \(inputDict)")
+                let inputDict = parseToolInput(inputString)
+                logger.info("Tool use detected from messageStop: \(name)")
                 return (toolUseId: toolUseId, name: name, input: inputDict)
             }
         }
-        
-        if case .messagestop(let stopEvent) = chunk,
-           stopEvent.stopReason == .toolUse,
-           let toolUseId = await tracker.getToolUseId(),
-           let name = await tracker.getToolName() {
-            
-            let inputString = await tracker.getInputString()
-            
-            var inputDict: [String: Any] = [:]
-            
-            if inputString.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                inputDict = [:]
-            } else if let data = inputString.data(using: .utf8) {
-                do {
-                    if let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] {
-                        inputDict = json
-                    } else if let jsonArray = try JSONSerialization.jsonObject(with: data) as? [Any] {
-                        inputDict = ["array": jsonArray]
-                    }
-                } catch {
-                    inputDict = ["text": inputString]
-                }
-            } else {
-                inputDict = ["text": inputString]
-            }
-            
-            logger.info("Tool use detected from messageStop: \(name)")
-            return (toolUseId: toolUseId, name: name, input: inputDict)
-        }
-        
+
         return nil
+    }
+
+    /**
+     * Checks if a streaming chunk is a messagestop event with tool use reason.
+     *
+     * @param chunk A streaming output chunk
+     * @return True if the chunk signals the end of a tool-use response
+     */
+    private func isToolUseStop(_ chunk: BedrockRuntimeClientTypes.ConverseStreamOutput) -> Bool {
+        if case .messagestop(let stopEvent) = chunk,
+           stopEvent.stopReason == .toolUse {
+            return true
+        }
+        return false
     }
     
     // MARK: - handleTextLLMWithConverseStream
@@ -871,17 +929,32 @@ class ChatViewModel: ObservableObject {
         // Get Bedrock messages in AWS SDK format
         let bedrockMessages = try conversationHistory.map { try convertToBedrockMessage($0, modelId: chatModel.id) }
         
-        // Convert to system prompt format used by AWS SDK
+        // Build system prompt — append tool availability notice when tools are not available
+        var finalSystemPrompt = systemPrompt
+        if toolConfig == nil && !finalSystemPrompt.isEmpty {
+            finalSystemPrompt += "\n\nYou do not have access to any external tools, web browsing, or URL fetching capabilities. Do not simulate or fabricate tool calls or their responses. If a user's request requires external access, clearly explain that you cannot perform that action."
+        }
+
         let systemContentBlock: [AWSBedrockRuntime.BedrockRuntimeClientTypes.SystemContentBlock]? =
-        systemPrompt.isEmpty ? nil : [.text(systemPrompt)]
-        
+        finalSystemPrompt.isEmpty ? nil : [.text(finalSystemPrompt)]
+
         logger.info("Starting converseStream request with model ID: \(chatModel.id)")
-        
+
         // Start the tool cycling process
         try await processToolCycles(bedrockMessages: bedrockMessages, systemContentBlock: systemContentBlock, toolConfig: toolConfig, turnCount: turn_count, maxTurns: maxTurns)
     }
     
-    // Process tool cycles recursively
+    /**
+     * Processes tool cycles recursively with parallel tool execution support.
+     * Phase 1: Streams all chunks from the model, collecting tool use blocks without executing.
+     * Phase 2: Executes all collected tools in parallel, updates UI per-tool, then recurses.
+     *
+     * @param bedrockMessages The current conversation messages for the API
+     * @param systemContentBlock System prompt content blocks
+     * @param toolConfig Tool configuration for the API request
+     * @param turnCount Current tool cycle turn number
+     * @param maxTurns Maximum allowed tool cycle turns
+     */
     private func processToolCycles(
         bedrockMessages: [AWSBedrockRuntime.BedrockRuntimeClientTypes.Message],
         systemContentBlock: [AWSBedrockRuntime.BedrockRuntimeClientTypes.SystemContentBlock]?,
@@ -889,38 +962,29 @@ class ChatViewModel: ObservableObject {
         turnCount: Int,
         maxTurns: Int
     ) async throws {
-        // Check if we've reached maximum turns
         if turnCount >= maxTurns {
             logger.info("Maximum number of tool use turns (\(maxTurns)) reached")
             return
         }
-        
-        // State variables for this conversation turn
+
         var streamedText = ""
         var thinking: String? = nil
         var thinkingSignature: String? = nil
         var isFirstChunk = true
         var toolWasUsed = false
-        
-        // Use bedrockMessages directly instead of re-fetching conversation history
-        // This ensures tool_use/tool_result pairs are properly maintained
-        
-        // Use for message ID tracking
+
         let messageId = UUID()
         currentStreamingMessageId = messageId
-        var currentToolInfo: ToolInfo? = nil
-        
-        // Reset thinking summary state for new message
+        var collectedToolInfos: [ToolInfo] = []
+
         lastThinkingSummaryLength = 0
         thinkingCompleted = false
-        
-        // Reset tool tracker
+
         await ToolUseTracker.shared.reset()
-        
-        // Capture backend locally to avoid data races
+
         let backend = await MainActor.run { backendModel.backend }
-        
-        // Stream chunks from the model
+
+        // Phase 1: Stream all chunks, collect tool uses without executing
         for try await chunk in try await backend.converseStream(
             withId: chatModel.id,
             messages: bedrockMessages,
@@ -928,7 +992,6 @@ class ChatViewModel: ObservableObject {
             inferenceConfig: nil,
             toolConfig: toolConfig,
             usageHandler: { @Sendable [weak self] usage in
-                // Format usage information for toast display
                 Task { @MainActor [weak self] in
                     guard let self = self else { return }
                     let formattedUsage = self.formatUsageString(usage)
@@ -936,21 +999,22 @@ class ChatViewModel: ObservableObject {
                 }
             }
         ) {
-            // Check for tool use in each chunk
+            // Collect tool use blocks (don't execute yet)
             if let toolUseInfo = await extractToolUseFromChunk(chunk) {
                 toolWasUsed = true
-                logger.info("Tool use detected in cycle \(turnCount+1): \(toolUseInfo.name)")
-                
-                // Create tool info object from the extracted data
-                currentToolInfo = ToolInfo(
+                let toolInfo = ToolInfo(
                     id: toolUseInfo.toolUseId,
                     name: toolUseInfo.name,
                     input: JSONValue.from(toolUseInfo.input)
                 )
-                
-                // If this is our first message (no content streamed yet), create a new message
+
+                // Avoid duplicates (contentblockstop may fire before messagestop)
+                if !collectedToolInfos.contains(where: { $0.id == toolInfo.id }) {
+                    collectedToolInfos.append(toolInfo)
+                }
+
+                // Update UI to show tool is pending
                 if isFirstChunk {
-                    // If first message, create initial message with thinking if available
                     let initialMessage = MessageData(
                         id: messageId,
                         text: streamedText.isEmpty ? "Analyzing your request..." : streamedText,
@@ -959,187 +1023,42 @@ class ChatViewModel: ObservableObject {
                         user: chatModel.name,
                         isError: false,
                         sentTime: Date(),
-                        toolUse: currentToolInfo
+                        toolUses: collectedToolInfos,
+                        toolResults: collectedToolInfos.map {
+                            ToolResultEntry(toolUseId: $0.id, toolName: $0.name, result: "", status: "running")
+                        }
                     )
                     addMessage(initialMessage)
                     isFirstChunk = false
-                } else {
-                    // If message already exists, update tool info and ensure thinking/signature are preserved
-                    if let index = self.messages.firstIndex(where: { $0.id == messageId }) {
-                        // Preserve the current displayed text
-                        let currentText = self.messages[index].text
-                        
-                        // Update tool info in UI
-                        self.messages[index].toolUse = currentToolInfo
-                        
-                        // Ensure thinking and signature are set (may have been streamed before tool use)
-                        if self.messages[index].thinking == nil && thinking != nil {
-                            self.messages[index].thinking = thinking
-                        }
-                        if self.messages[index].signature == nil && thinkingSignature != nil {
-                            self.messages[index].signature = thinkingSignature
-                        }
-                        
-                        // Update storage (without changing text, but include thinking/signature)
-                        chatManager.updateMessageWithToolInfo(
-                            for: chatId,
-                            messageId: messageId,
-                            newText: currentText, // Keep existing text
-                            toolInfo: currentToolInfo!,
-                            thinking: self.messages[index].thinking,
-                            thinkingSignature: self.messages[index].signature
-                        )
+                } else if let index = self.messages.firstIndex(where: { $0.id == messageId }) {
+                    self.messages[index].toolUses = collectedToolInfos
+                    self.messages[index].toolResults = collectedToolInfos.map {
+                        ToolResultEntry(toolUseId: $0.id, toolName: $0.name, result: "", status: "running")
+                    }
+                    if self.messages[index].thinking == nil && thinking != nil {
+                        self.messages[index].thinking = thinking
+                    }
+                    if self.messages[index].signature == nil && thinkingSignature != nil {
+                        self.messages[index].signature = thinkingSignature
                     }
                 }
-                
-                // Execute the tool with fixed Sendable result handling
-                logger.info("Executing MCP tool: \(toolUseInfo.name)")
-                let toolResult = await executeSendableMCPTool(
-                    id: toolUseInfo.toolUseId,
-                    name: toolUseInfo.name,
-                    input: toolUseInfo.input
-                )
-                
-                // Extract result text and status
-                let status = toolResult.status
-                let resultText = toolResult.text
-                
-                logger.info("Tool execution completed with status: \(status)")
-                
-                // Create tool result info for modal
-                let newToolResult = ToolResultInfo(
-                    toolUseId: toolUseInfo.toolUseId,
-                    toolName: toolUseInfo.name,
-                    input: JSONValue.from(toolUseInfo.input),
-                    result: resultText,
-                    status: status
-                )
-                
-                // Add to tool results collection
-                toolResults.append(newToolResult)
-                
-                // Get the existing message text to preserve in history
-                let preservedText = isFirstChunk ? streamedText :
-                    (messages.first(where: { $0.id == messageId })?.text ?? streamedText)
-                
-                // Update both UI and storage consistently
-                updateMessageWithToolInfo(
-                    messageId: messageId,
-                    newText: nil, // Pass nil to preserve existing text
-                    toolInfo: currentToolInfo,
-                    toolResult: resultText
-                )
-                
-                // Important: Create tool result message without including full result in conversation history
-                // This follows Python's approach and avoids ValidationException errors about toolResult/toolUse mismatches
-                // Override the main 'text' with "[Tool Result Reference--XXB]" if this user message represents a tool result
-                // This makes loading simpler and ensures the result text is preserved in MessageView by creating emptyview.
-                let toolResultMessage = BedrockMessage(
-                    role: .user,
-                    content: [
-                        .toolresult(MessageContent.ToolResultContent(
-                            toolUseId: toolUseInfo.toolUseId,
-                            result: resultText,
-                            status: status
-                        ))
-                    ]
-                )
-                
-                // For assistant message in history with tool use - preserve original assistant text
-                let assistantMessage: BedrockMessage
 
-                if let existingThinking = thinking, let existingSignature = thinkingSignature {
-                    // When thinking is present - add in order: thinking, text, tooluse
-                    assistantMessage = BedrockMessage(
-                        role: .assistant,
-                        content: [
-                            .thinking(MessageContent.ThinkingContent(
-                                text: existingThinking,
-                                signature: existingSignature
-                            )),
-                            .text(preservedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?
-                                          "Analyzing your request..." : preservedText),
-                            .tooluse(MessageContent.ToolUseContent(
-                                toolUseId: toolUseInfo.toolUseId,
-                                name: toolUseInfo.name,
-                                input: currentToolInfo!.input
-                            ))
-                        ]
-                    )
-                } else {
-                    // When thinking is not present - need to use reasoning disabled option
-                    // Therefore need to disable reasoning in inferenceConfig when calling API
-                    assistantMessage = BedrockMessage(
-                        role: .assistant,
-                        content: [
-                            .text(preservedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?
-                                          "Analyzing your request..." : preservedText),
-                            .tooluse(MessageContent.ToolUseContent(
-                                toolUseId: toolUseInfo.toolUseId,
-                                name: toolUseInfo.name,
-                                input: currentToolInfo!.input
-                            ))
-                        ]
-                    )
-                }
-
-                logger.debug("Added assistant message with tool_use ID: \(toolUseInfo.toolUseId)")
-                logger.debug("Added user message with tool_result ID: \(toolUseInfo.toolUseId)")
-
-                // Convert BedrockMessage to AWS SDK format and append to existing messages
-                let awsAssistantMessage = try convertToBedrockMessage(assistantMessage, modelId: chatModel.id)
-                let awsToolResultMessage = try convertToBedrockMessage(toolResultMessage, modelId: chatModel.id)
-                
-                // Build updated messages array: existing + assistant with tool_use + user with tool_result
-                var updatedMessages = bedrockMessages
-                updatedMessages.append(awsAssistantMessage)
-                updatedMessages.append(awsToolResultMessage)
-                
-                // UI: tool result is displayed in the assistant message (via toolResult field)
-                // The streaming message already has toolUse and toolResult set via updateMessageWithToolInfo
-                // We need to add a hidden tool result entry for API history, but NOT display it as user message
-                
-                // Add tool result as a special "hidden" message for API history only
-                // Use "ToolResult" as user to distinguish from regular user messages
-                // This will be converted to user role for API but displayed on assistant side in UI
-                let toolResultMsg = MessageData(
-                    id: UUID(),
-                    text: "", // Empty text - result is shown in assistant message's toolResult field
-                    user: "ToolResult", // Special marker - not "User" so it won't show as user bubble
-                    isError: false,
-                    sentTime: Date(),
-                    toolUse: ToolInfo(
-                        id: toolUseInfo.toolUseId,
-                        name: toolUseInfo.name,
-                        input: JSONValue.from(toolUseInfo.input)
-                    ),
-                    toolResult: resultText
-                )
-                messages.append(toolResultMsg)
-                
-                // Save to persistent storage
-                await saveFromUIMessages()
-                
-                // Recursively continue with next turn
-                try await processToolCycles(
-                    bedrockMessages: updatedMessages,
-                    systemContentBlock: systemContentBlock,
-                    toolConfig: toolConfig,
-                    turnCount: turnCount + 1,
-                    maxTurns: maxTurns
-                )
-                
-                // End this turn's processing
-                return
+                continue
             }
-            
-            // Process regular text chunk if no tool was detected
+
+            // Check for messagestop with toolUse reason (signals end of all tool blocks)
+            if isToolUseStop(chunk) {
+                // All tools collected via contentblockstop events above
+                continue
+            }
+
+            // Process regular text chunk
             if let textChunk = extractTextFromChunk(chunk) {
                 streamedText += textChunk
                 appendTextToMessage(textChunk, messageId: messageId, shouldCreateNewMessage: isFirstChunk)
                 isFirstChunk = false
             }
-            
+
             // Process thinking chunk
             let thinkingResult = extractThinkingFromChunk(chunk)
             if let thinkingText = thinkingResult.text {
@@ -1147,55 +1066,173 @@ class ChatViewModel: ObservableObject {
                 appendThinkingToMessage(thinkingText, messageId: messageId, shouldCreateNewMessage: isFirstChunk)
                 isFirstChunk = false
             }
-            
             if let thinkingSignatureText = thinkingResult.signature {
                 thinkingSignature = thinkingSignatureText
             }
         }
-        
-        // If we get here, the model completed its response without using a tool
-        if !toolWasUsed {
-            // Create final assistant message
-            let assistantText = streamedText.trimmingCharacters(in: .whitespacesAndNewlines)
-            
-            // Only create a new message if we haven't been streaming
-            if isFirstChunk {
-                let assistantMessage = MessageData(
-                    id: messageId,
-                    text: assistantText,
-                    thinking: thinking,
-                    signature: thinkingSignature,
-                    user: chatModel.name,
-                    isError: false,
-                    sentTime: Date()
-                )
-                addMessage(assistantMessage)
-            } else {
-                // Update the final message content - both UI and storage
-                updateMessageText(messageId: messageId, newText: assistantText)
-                
-                if let thinking = thinking {
-                    updateMessageThinking(messageId: messageId, newThinking: thinking, signature: thinkingSignature)
+
+        // Phase 2: If tools were collected, execute them in parallel
+        if toolWasUsed && !collectedToolInfos.isEmpty {
+            logger.info("Executing \(collectedToolInfos.count) tool(s) in parallel for cycle \(turnCount+1)")
+
+            // Execute all tools in parallel using unstructured Tasks
+            // Each task calls MCPManager (which is also @MainActor) and returns result
+            var tasks: [Int: Task<SendableToolResult, Never>] = [:]
+
+            for (idx, info) in collectedToolInfos.enumerated() {
+                let toolId = info.id
+                let toolName = info.name
+                let toolInput = info.input.asDictionary ?? [:]
+                tasks[idx] = Task {
+                    await self.executeSendableMCPTool(id: toolId, name: toolName, input: toolInput)
                 }
             }
-            
-            // Generate final thinking summary if thinking exists and not already completed
-            if let thinkingContent = thinking, !thinkingContent.isEmpty, !thinkingCompleted {
-                Task {
-                    await generateThinkingSummary(for: messageId, thinking: thinkingContent)
+
+            // Collect results and update UI as each completes
+            var executionResults = Array(repeating: SendableToolResult(status: "error", text: "Not executed", error: nil), count: collectedToolInfos.count)
+
+            for (idx, task) in tasks {
+                let result = await task.value
+                executionResults[idx] = result
+
+                // Update UI with individual tool completion
+                let toolId = collectedToolInfos[idx].id
+                let toolName = collectedToolInfos[idx].name
+                if let msgIndex = self.messages.firstIndex(where: { $0.id == messageId }),
+                   var entries = self.messages[msgIndex].toolResults,
+                   let entryIdx = entries.firstIndex(where: { $0.toolUseId == toolId }) {
+                    entries[entryIdx] = ToolResultEntry(
+                        toolUseId: toolId, toolName: toolName,
+                        result: result.text, status: result.status
+                    )
+                    self.messages[msgIndex].toolResults = entries
                 }
             }
-            
-            // Reset thinking summary state for next message
-            lastThinkingSummaryLength = 0
-            thinkingCompleted = false
-            
-            // Save conversation history from UI messages
-            // This preserves all tool_use/tool_result information correctly
+
+            // Build result entries
+            let resultEntries: [ToolResultEntry] = zip(collectedToolInfos, executionResults).map { info, result in
+                ToolResultEntry(toolUseId: info.id, toolName: info.name, result: result.text, status: result.status)
+            }
+
+            // Update UI message with final results
+            if let index = self.messages.firstIndex(where: { $0.id == messageId }) {
+                self.messages[index].toolUses = collectedToolInfos
+                self.messages[index].toolResults = resultEntries
+            }
+
+            // Add to toolResults collection (for modal)
+            for (info, result) in zip(collectedToolInfos, executionResults) {
+                toolResults.append(ToolResultInfo(
+                    toolUseId: info.id,
+                    toolName: info.name,
+                    input: info.input,
+                    result: result.text,
+                    status: result.status
+                ))
+            }
+
+            // Update storage
+            let preservedText = messages.first(where: { $0.id == messageId })?.text ?? streamedText
+            chatManager.updateMessageWithToolInfos(
+                for: chatId, messageId: messageId, newText: preservedText,
+                toolInfos: collectedToolInfos, toolResultEntries: resultEntries,
+                thinking: thinking, thinkingSignature: thinkingSignature
+            )
+
+            // Build assistant message with all tool_use blocks
+            var assistantContent: [MessageContent] = []
+            if let existingThinking = thinking, let existingSignature = thinkingSignature {
+                assistantContent.append(.thinking(MessageContent.ThinkingContent(
+                    text: existingThinking, signature: existingSignature
+                )))
+            }
+            assistantContent.append(.text(
+                preservedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    ? "Analyzing your request..." : preservedText
+            ))
+            for info in collectedToolInfos {
+                assistantContent.append(.tooluse(MessageContent.ToolUseContent(
+                    toolUseId: info.id, name: info.name, input: info.input
+                )))
+            }
+            let assistantMessage = BedrockMessage(role: .assistant, content: assistantContent)
+
+            // Build user message with all tool_result blocks
+            var toolResultContents: [MessageContent] = []
+            for (info, result) in zip(collectedToolInfos, executionResults) {
+                toolResultContents.append(.toolresult(MessageContent.ToolResultContent(
+                    toolUseId: info.id, result: result.text, status: result.status
+                )))
+            }
+            let toolResultMessage = BedrockMessage(role: .user, content: toolResultContents)
+
+            logger.debug("Added assistant message with \(collectedToolInfos.count) tool_use block(s)")
+            logger.debug("Added user message with \(collectedToolInfos.count) tool_result block(s)")
+
+            let awsAssistantMessage = try convertToBedrockMessage(assistantMessage, modelId: chatModel.id)
+            let awsToolResultMessage = try convertToBedrockMessage(toolResultMessage, modelId: chatModel.id)
+
+            var updatedMessages = bedrockMessages
+            updatedMessages.append(awsAssistantMessage)
+            updatedMessages.append(awsToolResultMessage)
+
+            // Add hidden tool result message for API history
+            let toolResultMsg = MessageData(
+                id: UUID(),
+                text: "",
+                user: "ToolResult",
+                isError: false,
+                sentTime: Date(),
+                toolUses: collectedToolInfos,
+                toolResults: resultEntries
+            )
+            messages.append(toolResultMsg)
+
             await saveFromUIMessages()
+
+            // Recursively continue with next turn
+            try await processToolCycles(
+                bedrockMessages: updatedMessages,
+                systemContentBlock: systemContentBlock,
+                toolConfig: toolConfig,
+                turnCount: turnCount + 1,
+                maxTurns: maxTurns
+            )
+            currentStreamingMessageId = nil
+            return
         }
-        
-        // Clear tracking of streaming message ID
+
+        // No tools used — finalize text response
+        let assistantText = streamedText.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if isFirstChunk {
+            let assistantMessage = MessageData(
+                id: messageId,
+                text: assistantText,
+                thinking: thinking,
+                signature: thinkingSignature,
+                user: chatModel.name,
+                isError: false,
+                sentTime: Date()
+            )
+            addMessage(assistantMessage)
+        } else {
+            updateMessageText(messageId: messageId, newText: assistantText)
+            if let thinking = thinking {
+                updateMessageThinking(messageId: messageId, newThinking: thinking, signature: thinkingSignature)
+            }
+        }
+
+        if let thinkingContent = thinking, !thinkingContent.isEmpty, !thinkingCompleted {
+            Task {
+                await generateThinkingSummary(for: messageId, thinking: thinkingContent)
+            }
+        }
+
+        lastThinkingSummaryLength = 0
+        thinkingCompleted = false
+
+        await saveFromUIMessages()
         currentStreamingMessageId = nil
     }
     
@@ -1398,27 +1435,32 @@ class ChatViewModel: ObservableObject {
     }
 
     private func updateMessageWithToolInfo(messageId: UUID, newText: String? = nil, toolInfo: ToolInfo?, toolResult: String? = nil) {
+        guard let toolInfo = toolInfo else { return }
         // Update UI
         if let index = self.messages.firstIndex(where: { $0.id == messageId }) {
-            // Only update text if provided and not nil
             if let text = newText {
                 self.messages[index].text = text
             }
-            self.messages[index].toolUse = toolInfo
-            self.messages[index].toolResult = toolResult
+            self.messages[index].toolUses = [toolInfo]
+            if let result = toolResult {
+                self.messages[index].toolResults = [ToolResultEntry(
+                    toolUseId: toolInfo.id, toolName: toolInfo.name,
+                    result: result, status: "success"
+                )]
+            }
         }
-        
+
         // Update storage with thinking/signature preserved
         if let index = self.messages.firstIndex(where: { $0.id == messageId }) {
             let currentText = self.messages[index].text
             let currentThinking = self.messages[index].thinking
             let currentSignature = self.messages[index].signature
-            
+
             chatManager.updateMessageWithToolInfo(
                 for: chatId,
                 messageId: messageId,
-                newText: currentText, // Always use current text to preserve original response
-                toolInfo: toolInfo!,
+                newText: currentText,
+                toolInfo: toolInfo,
                 toolResult: toolResult,
                 thinking: currentThinking,
                 thinkingSignature: currentSignature
@@ -1504,16 +1546,18 @@ class ChatViewModel: ObservableObject {
             }
 
             // Handle tool results specially - they should ONLY contain toolresult, no text
-            if role == .user, let toolUse = message.toolUse, let toolResult = message.toolResult {
-                // Tool result message - only add toolresult content
-                contents.append(.toolresult(MessageContent.ToolResultContent(
-                    toolUseId: toolUse.id,
-                    result: toolResult,
-                    status: "success"
-                )))
+            if role == .user, let toolUses = message.toolUses, let toolResultEntries = message.toolResults,
+               !toolUses.isEmpty, !toolResultEntries.isEmpty {
+                // Tool result message - add all toolresult content blocks
+                for entry in toolResultEntries {
+                    contents.append(.toolresult(MessageContent.ToolResultContent(
+                        toolUseId: entry.toolUseId,
+                        result: entry.result,
+                        status: entry.status
+                    )))
+                }
             } else {
                 // Regular message - add text content AFTER documents/images
-                // Include pasted texts in the text block for API transmission
                 var fullText = message.text
                 if let pastedTexts = message.pastedTexts, !pastedTexts.isEmpty {
                     for pastedText in pastedTexts {
@@ -1526,14 +1570,16 @@ class ChatViewModel: ObservableObject {
                 if !fullText.isEmpty {
                     contents.append(.text(fullText))
                 }
-                
-                // Add tool info if present (for assistant messages with tool_use)
-                if let toolUse = message.toolUse, role == .assistant {
-                    contents.append(.tooluse(MessageContent.ToolUseContent(
-                        toolUseId: toolUse.id,
-                        name: toolUse.name,
-                        input: toolUse.input
-                    )))
+
+                // Add all tool_use blocks if present (for assistant messages)
+                if let toolUses = message.toolUses, role == .assistant {
+                    for toolInfo in toolUses {
+                        contents.append(.tooluse(MessageContent.ToolUseContent(
+                            toolUseId: toolInfo.id,
+                            name: toolInfo.name,
+                            input: toolInfo.input
+                        )))
+                    }
                 }
             }
             
@@ -1560,17 +1606,18 @@ class ChatViewModel: ObservableObject {
             // "ToolResult" is a special marker for tool results that display on assistant side in UI
             let role: Message.Role = (messageData.user == "User" || messageData.user == "ToolResult") ? .user : .assistant
             
-            // Convert ToolInfo to Message.ToolUse if present
-            var toolUse: Message.ToolUse? = nil
-            if let toolInfo = messageData.toolUse {
-                toolUse = Message.ToolUse(
-                    toolId: toolInfo.id,
-                    toolName: toolInfo.name,
-                    inputs: toolInfo.input,
-                    result: messageData.toolResult
-                )
+            // Convert ToolInfo array to Message.ToolUse array
+            var toolUsesList: [Message.ToolUse]? = nil
+            if let toolInfos = messageData.toolUses {
+                toolUsesList = toolInfos.map { info in
+                    var use = Message.ToolUse(toolId: info.id, toolName: info.name, inputs: info.input)
+                    if let entry = messageData.toolResults?.first(where: { $0.toolUseId == info.id }) {
+                        use.result = entry.result
+                    }
+                    return use
+                }
             }
-            
+
             let message = Message(
                 id: messageData.id,
                 text: messageData.text,
@@ -1588,7 +1635,7 @@ class ChatViewModel: ObservableObject {
                 pastedTexts: messageData.pastedTexts,
                 videoUrl: messageData.videoUrl,
                 videoS3Uri: messageData.videoS3Uri,
-                toolUse: toolUse
+                toolUses: toolUsesList
             )
             
             newConversationHistory.addMessage(message)
@@ -1655,16 +1702,18 @@ class ChatViewModel: ObservableObject {
             }
 
             // Handle tool results specially - they should ONLY contain toolresult, no text
-            if role == .user, let toolUse = message.toolUse, let result = toolUse.result {
-                // Tool result message - only add toolresult content
-                contents.append(.toolresult(.init(
-                    toolUseId: toolUse.toolId,
-                    result: result,
-                    status: "success"
-                )))
+            if role == .user, let toolUses = message.toolUses, toolUses.contains(where: { $0.result != nil }) {
+                for use in toolUses {
+                    if let result = use.result {
+                        contents.append(.toolresult(.init(
+                            toolUseId: use.toolId,
+                            result: result,
+                            status: "success"
+                        )))
+                    }
+                }
             } else {
                 // Regular message - add text content AFTER documents/images
-                // Include pasted texts in the text block for API transmission
                 var fullText = message.text
                 if let pastedTexts = message.pastedTexts, !pastedTexts.isEmpty {
                     for pastedText in pastedTexts {
@@ -1677,14 +1726,16 @@ class ChatViewModel: ObservableObject {
                 if !fullText.isEmpty {
                     contents.append(.text(fullText))
                 }
-                
-                // Handle Tool Use for assistant messages
-                if role == .assistant, let toolUse = message.toolUse {
-                    contents.append(.tooluse(.init(
-                        toolUseId: toolUse.toolId,
-                        name: toolUse.toolName,
-                        input: toolUse.inputs
-                    )))
+
+                // Handle Tool Use for assistant messages (all tool_use blocks)
+                if role == .assistant, let toolUses = message.toolUses {
+                    for use in toolUses {
+                        contents.append(.tooluse(.init(
+                            toolUseId: use.toolId,
+                            name: use.toolName,
+                            input: use.inputs
+                        )))
+                    }
                 }
             }
             
@@ -2494,13 +2545,12 @@ class ChatViewModel: ObservableObject {
             documentBase64Strings: message.documentBase64Strings,
             documentFormats: message.documentFormats,
             documentNames: message.documentNames,
-            toolUse: message.toolUse.map { toolUse in
-                Message.ToolUse(
-                    toolId: toolUse.id,
-                    toolName: toolUse.name,
-                    inputs: toolUse.input,
-                    result: message.toolResult
-                )
+            toolUses: message.toolUses?.map { info in
+                var use = Message.ToolUse(toolId: info.id, toolName: info.name, inputs: info.input)
+                if let entry = message.toolResults?.first(where: { $0.toolUseId == info.id }) {
+                    use.result = entry.result
+                }
+                return use
             }
         )
         
@@ -2775,13 +2825,18 @@ class ChatViewModel: ObservableObject {
         
         // Get tool configurations if MCP is enabled (but disable for non-streaming for now)
         let toolConfig: AWSBedrockRuntime.BedrockRuntimeClientTypes.ToolConfiguration? = nil
-        
+
         // Get Bedrock messages in AWS SDK format
         let bedrockMessages = try conversationHistory.map { try convertToBedrockMessage($0, modelId: chatModel.id) }
-        
-        // Convert to system prompt format used by AWS SDK
+
+        // Build system prompt — append tool availability notice when tools are not available
+        var finalSystemPrompt = systemPrompt
+        if toolConfig == nil && !finalSystemPrompt.isEmpty {
+            finalSystemPrompt += "\n\nYou do not have access to any external tools, web browsing, or URL fetching capabilities. Do not simulate or fabricate tool calls or their responses. If a user's request requires external access, clearly explain that you cannot perform that action."
+        }
+
         let systemContentBlock: [AWSBedrockRuntime.BedrockRuntimeClientTypes.SystemContentBlock]? =
-        systemPrompt.isEmpty ? nil : [.text(systemPrompt)]
+        finalSystemPrompt.isEmpty ? nil : [.text(finalSystemPrompt)]
         
         logger.info("Starting non-streaming converse request with model ID: \(chatModel.id)")
         

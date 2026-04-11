@@ -43,13 +43,25 @@ struct Message: Codable, Identifiable {
     var videoS3Uri: String?  // S3 URI for video reference
     
     // Tool use is a separate concern - not mixed with message text
-    var toolUse: ToolUse?
-    
+    var toolUses: [ToolUse]?
+
+    // Convenience: first tool use (backward compat)
+    var toolUse: ToolUse? {
+        get { toolUses?.first }
+        set {
+            if let v = newValue {
+                if toolUses != nil { toolUses![0] = v } else { toolUses = [v] }
+            } else {
+                toolUses = nil
+            }
+        }
+    }
+
     enum Role: String, Codable {
         case user
         case assistant
     }
-    
+
     struct ToolUse: Codable {
         let toolId: String
         let toolName: String
@@ -196,17 +208,20 @@ class ChatManager: ObservableObject {
         for message in messages {
             let role = message.user == "User" ? Message.Role.user : Message.Role.assistant
             
-            var toolUse: Message.ToolUse? = nil
-            if let tool = message.toolUse {
-                toolUse = Message.ToolUse(
-                    toolId: tool.id,
-                    toolName: tool.name,
-                    inputs: tool.input,
-                    result: message.toolResult,
-                    resultTimestamp: message.toolResult != nil ? Date() : nil
-                )
+            var toolUsesList: [Message.ToolUse]? = nil
+            if let tools = message.toolUses {
+                toolUsesList = tools.map { tool in
+                    let resultEntry = message.toolResults?.first(where: { $0.toolUseId == tool.id })
+                    return Message.ToolUse(
+                        toolId: tool.id,
+                        toolName: tool.name,
+                        inputs: tool.input,
+                        result: resultEntry?.result,
+                        resultTimestamp: resultEntry != nil ? Date() : nil
+                    )
+                }
             }
-            
+
             let unifiedMessage = Message(
                 id: message.id,
                 text: message.text,
@@ -219,7 +234,7 @@ class ChatManager: ObservableObject {
                 documentBase64Strings: message.documentBase64Strings,
                 documentFormats: message.documentFormats,
                 documentNames: message.documentNames,
-                toolUse: toolUse
+                toolUses: toolUsesList
             )
             
             conversationHistory.addMessage(unifiedMessage)
@@ -651,35 +666,44 @@ class ChatManager: ObservableObject {
     }
     
     func updateMessageWithToolInfo(for chatId: String, messageId: UUID, newText: String, toolInfo: ToolInfo, toolResult: String? = nil, thinking: String? = nil, thinkingSignature: String? = nil) {
+        updateMessageWithToolInfos(
+            for: chatId, messageId: messageId, newText: newText,
+            toolInfos: [toolInfo],
+            toolResultEntries: toolResult.map { [ToolResultEntry(toolUseId: toolInfo.id, toolName: toolInfo.name, result: $0, status: "success")] },
+            thinking: thinking, thinkingSignature: thinkingSignature
+        )
+    }
+
+    /**
+     * Updates a message with multiple tool use infos and their results.
+     * Used by parallel tool execution to persist all tool data in a single update.
+     */
+    func updateMessageWithToolInfos(for chatId: String, messageId: UUID, newText: String, toolInfos: [ToolInfo], toolResultEntries: [ToolResultEntry]? = nil, thinking: String? = nil, thinkingSignature: String? = nil) {
         if var history = getConversationHistory(for: chatId) {
             if let index = history.messages.firstIndex(where: { $0.id == messageId }) {
-                // Update message text
                 history.messages[index].text = newText
-                
-                // Update thinking and signature if provided
+
                 if let thinking = thinking {
                     history.messages[index].thinking = thinking
                 }
                 if let signature = thinkingSignature {
                     history.messages[index].thinkingSignature = signature
                 }
-                
-                // Convert ToolInfo to Message.ToolUse
-                let toolUse = Message.ToolUse(
-                    toolId: toolInfo.id,
-                    toolName: toolInfo.name,
-                    inputs: toolInfo.input
-                )
-                
-                // Update tool usage and result
-                history.messages[index].toolUse = toolUse
-                if let result = toolResult {
-                    history.messages[index].toolUse?.result = result
+
+                // Convert ToolInfos to Message.ToolUse array
+                let uses = toolInfos.map { info in
+                    var use = Message.ToolUse(toolId: info.id, toolName: info.name, inputs: info.input)
+                    if let entries = toolResultEntries,
+                       let entry = entries.first(where: { $0.toolUseId == info.id }) {
+                        use.result = entry.result
+                    }
+                    return use
                 }
-                
+                history.messages[index].toolUses = uses
+
                 saveConversationHistory(history, for: chatId)
             }
-            
+
             DispatchQueue.main.async {
                 if let chatIndex = self.chats.firstIndex(where: { $0.chatId == chatId }) {
                     self.chats[chatIndex].lastMessageDate = Date()
@@ -692,23 +716,17 @@ class ChatManager: ObservableObject {
             if let index = messages.firstIndex(where: { $0.id == messageId }) {
                 var message = messages[index]
                 message.text = newText
-                message.toolUse = toolInfo
-                
-                // Update thinking and signature if provided
-                if let thinking = thinking {
-                    message.thinking = thinking
+                message.toolUses = toolInfos
+
+                if let thinking = thinking { message.thinking = thinking }
+                if let signature = thinkingSignature { message.signature = signature }
+                if let entries = toolResultEntries {
+                    message.toolResults = entries
                 }
-                if let signature = thinkingSignature {
-                    message.signature = signature
-                }
-                
-                if let result = toolResult {
-                    message.toolResult = result
-                }
-                
+
                 messages[index] = message
                 saveMessagesToFile(chatId: chatId, messages: messages)
-                
+
                 DispatchQueue.main.async {
                     if let chatIndex = self.chats.firstIndex(where: { $0.chatId == chatId }) {
                         self.chats[chatIndex].lastMessageDate = Date()
@@ -747,16 +765,22 @@ class ChatManager: ObservableObject {
             // Convert from unified format to MessageData
             return history.messages.map { message in
                 let user = message.role == .user ? "User" : getChatModel(for: chatId)?.name ?? "Assistant"
-                
-                // Convert tool usage
-                let toolUse: ToolInfo? = message.toolUse.map { usage in
-                    return ToolInfo(
-                        id: usage.toolId,
-                        name: usage.toolName,
-                        input: usage.inputs
+
+                // Convert tool usages
+                let toolInfos: [ToolInfo]? = message.toolUses?.map { usage in
+                    ToolInfo(id: usage.toolId, name: usage.toolName, input: usage.inputs)
+                }
+
+                let toolResultEntries: [ToolResultEntry]? = message.toolUses?.compactMap { usage in
+                    guard let result = usage.result else { return nil }
+                    return ToolResultEntry(
+                        toolUseId: usage.toolId,
+                        toolName: usage.toolName,
+                        result: result,
+                        status: "success"
                     )
                 }
-                
+
                 return MessageData(
                     id: message.id,
                     text: message.text,
@@ -771,8 +795,8 @@ class ChatManager: ObservableObject {
                     documentFormats: message.documentFormats,
                     documentNames: message.documentNames,
                     pastedTexts: message.pastedTexts,
-                    toolUse: toolUse,
-                    toolResult: message.toolUse?.result,
+                    toolUses: toolInfos,
+                    toolResults: toolResultEntries,
                     videoUrl: message.videoUrl,
                     videoS3Uri: message.videoS3Uri
                 )
@@ -1024,27 +1048,26 @@ class ChatManager: ObservableObject {
                     documentNames = names
                 }
                 
-                // Tool usage
-                var toolUse: ToolInfo? = nil
-                var toolResult: String? = nil
-                
+                // Tool usage (legacy single → array migration)
+                var toolInfos: [ToolInfo]? = nil
+                var toolResultEntries: [ToolResultEntry]? = nil
 
-                if let toolDict = json["toolUse"] as? [String: Any] {
+                if let toolDict = json["toolUse"] as? [String: Any] ?? json["tool_use"] as? [String: Any] {
                     if let toolId = toolDict["id"] as? String,
                        let toolName = toolDict["name"] as? String,
                        let toolInput = toolDict["input"] as? [String: Any] {
-                        toolUse = ToolInfo(id: toolId, name: toolName, input: JSONValue.from(toolInput))
-                    }
-                } else if let toolDict = json["tool_use"] as? [String: Any] {
-                    if let toolId = toolDict["id"] as? String,
-                       let toolName = toolDict["name"] as? String,
-                       let toolInput = toolDict["input"] as? [String: Any] {
-                        toolUse = ToolInfo(id: toolId, name: toolName, input: JSONValue.from(toolInput))
+                        toolInfos = [ToolInfo(id: toolId, name: toolName, input: JSONValue.from(toolInput))]
                     }
                 }
-                
-                toolResult = (json["toolResult"] as? String) ?? (json["tool_result"] as? String)
-                
+
+                if let singleResult = (json["toolResult"] as? String) ?? (json["tool_result"] as? String),
+                   let firstTool = toolInfos?.first {
+                    toolResultEntries = [ToolResultEntry(
+                        toolUseId: firstTool.id, toolName: firstTool.name,
+                        result: singleResult, status: "success"
+                    )]
+                }
+
                 // Create message with extracted fields
                 let message = MessageData(
                     id: id,
@@ -1059,8 +1082,8 @@ class ChatManager: ObservableObject {
                     documentBase64Strings: documentBase64Strings,
                     documentFormats: documentFormats,
                     documentNames: documentNames,
-                    toolUse: toolUse,
-                    toolResult: toolResult
+                    toolUses: toolInfos,
+                    toolResults: toolResultEntries
                 )
                 
                 messages.append(message)
