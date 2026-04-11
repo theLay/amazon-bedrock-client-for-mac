@@ -330,19 +330,69 @@ class ChatViewModel: ObservableObject {
     
     // MARK: - Public Methods
     
-    func loadInitialData() {
-        var loadedMessages = chatManager.getMessages(for: chatId)
-        
-        // Mark tool result messages with "ToolResult" user so they are hidden in UI
-        // Tool result messages have: user == "User", toolUse != nil, toolResult != nil
-        for i in 0..<loadedMessages.count {
-            if loadedMessages[i].user == "User" &&
-               loadedMessages[i].toolUse != nil &&
-               loadedMessages[i].toolResult != nil {
-                loadedMessages[i].user = "ToolResult"
+    func loadInitialData() async {
+        let baseDirectory = settingManager.defaultDirectory
+        let modelName = chatManager.getChatModel(for: chatId)?.name ?? "Assistant"
+        let chatId = self.chatId
+
+        // File I/O and JSON decoding run off the main thread
+        let loadedMessages = await Task.detached { () -> [MessageData] in
+            let historyURL = URL(fileURLWithPath: baseDirectory)
+                .appendingPathComponent("history/\(chatId)_unified_history.json")
+
+            if FileManager.default.fileExists(atPath: historyURL.path),
+               let data = try? Data(contentsOf: historyURL),
+               let history = try? JSONDecoder().decode(ConversationHistory.self, from: data) {
+
+                return history.messages.map { message in
+                    let user = message.role == .user ? "User" : modelName
+
+                    let toolInfos: [ToolInfo]? = message.toolUses?.map { usage in
+                        ToolInfo(id: usage.toolId, name: usage.toolName, input: usage.inputs)
+                    }
+
+                    let toolResultEntries: [ToolResultEntry]? = message.toolUses?.compactMap { usage in
+                        guard let result = usage.result else { return nil }
+                        return ToolResultEntry(
+                            toolUseId: usage.toolId,
+                            toolName: usage.toolName,
+                            result: result,
+                            status: "success"
+                        )
+                    }
+
+                    var msg = MessageData(
+                        id: message.id,
+                        text: message.text,
+                        thinking: message.thinking,
+                        thinkingSummary: message.thinkingSummary,
+                        signature: message.thinkingSignature,
+                        user: user,
+                        isError: message.isError,
+                        sentTime: message.timestamp,
+                        imageBase64Strings: message.imageBase64Strings,
+                        documentBase64Strings: message.documentBase64Strings,
+                        documentFormats: message.documentFormats,
+                        documentNames: message.documentNames,
+                        pastedTexts: message.pastedTexts,
+                        toolUses: toolInfos,
+                        toolResults: toolResultEntries,
+                        videoUrl: message.videoUrl,
+                        videoS3Uri: message.videoS3Uri
+                    )
+
+                    // Mark tool result messages so they are hidden in UI
+                    if msg.user == "User" && msg.toolUse != nil && msg.toolResult != nil {
+                        msg.user = "ToolResult"
+                    }
+
+                    return msg
+                }
             }
-        }
-        
+
+            return []
+        }.value
+
         messages = loadedMessages
     }
     

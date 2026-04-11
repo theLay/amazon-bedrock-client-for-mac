@@ -8,14 +8,6 @@
 import SwiftUI
 import Combine
 
-struct BottomAnchorPreferenceKey: PreferenceKey {
-    typealias Value = CGFloat
-    nonisolated(unsafe) static var defaultValue: CGFloat = 0
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-        value = nextValue()
-    }
-}
-
 struct ChatView: View {
     @StateObject private var viewModel: ChatViewModel
     @StateObject private var sharedMediaDataSource = SharedMediaDataSource()
@@ -26,7 +18,7 @@ struct ChatView: View {
     @FocusState private var isSearchFocused: Bool
     @SwiftUI.Environment(\.colorScheme) private var colorScheme: ColorScheme
     
-    @State private var isAtBottom: Bool = true
+    @State private var isAtBottom: Bool = false
     @State private var isSearchActive: Bool = false // Add search state tracking
     
     // Font size adjustment state
@@ -83,9 +75,9 @@ struct ChatView: View {
                 .allowsHitTesting(false)
             }
         }
-        .onAppear {
+        .task {
             // Restore existing messages from disk or other storage
-            viewModel.loadInitialData()
+            await viewModel.loadInitialData()
             
             // Set up usage handler for toast notifications
             viewModel.usageHandler = { usage in
@@ -203,9 +195,6 @@ struct ChatView: View {
                     scrollableMessageList(outerGeo: outerGeo, proxy: proxy)
                     enhancedScrollToBottomButton(outerGeo: outerGeo, proxy: proxy)
                 }
-                .onPreferenceChange(BottomAnchorPreferenceKey.self) { bottomY in
-                    handleBottomAnchorChange(bottomY, containerHeight: outerGeo.size.height)
-                }
                 .onChange(of: searchResult) { _, newResult in
                     jumpToFirstMatch(newResult, proxy: proxy)
                 }
@@ -220,7 +209,10 @@ struct ChatView: View {
         outerGeo: GeometryProxy,
         proxy: ScrollViewProxy
     ) -> some View {
-        let messageList = VStack(spacing: 2) {
+        let messageList = LazyVStack(spacing: 2) {
+            Color.clear
+                .frame(height: 1)
+                .id("Top")
             ForEach(Array(viewModel.messages.enumerated()), id: \.offset) { idx, message in
                 MessageView(
                     message: message, 
@@ -233,15 +225,15 @@ struct ChatView: View {
             Color.clear
                 .frame(height: 1)
                 .id("Bottom")
-                .anchorPreference(key: BottomAnchorPreferenceKey.self, value: .bottom) { anchor in
-                    outerGeo[anchor].y
-                }
+                .onAppear { isAtBottom = true }
+                .onDisappear { isAtBottom = false }
         }
         .padding()
         
         return ScrollView {
             messageList
         }
+        .defaultScrollAnchor(.top)
         .modifier(ScrollEdgeEffectModifier())
         .onChange(of: viewModel.messages) { _, _ in
             // If the user was at bottom and not searching, wait briefly for layout and scroll down again
@@ -252,16 +244,17 @@ struct ChatView: View {
                 }
             }
         }
-        // Scroll to bottom whenever the count of messages changes (but not during search)
-        .onChange(of: viewModel.messages.count) { _, _ in
-            if searchQuery.isEmpty {
+        // Scroll to bottom when new messages arrive during active conversation
+        .onChange(of: viewModel.messages.count) { oldCount, newCount in
+            if viewModel.isSending && searchQuery.isEmpty {
                 proxy.scrollTo("Bottom", anchor: .bottom)
+            } else if oldCount == 0 && newCount > 0 {
+                // Initial load — wait for layout to settle, then scroll to top
+                Task {
+                    try? await Task.sleep(nanoseconds: 100_000_000) // 0.1s
+                    proxy.scrollTo("Top", anchor: .top)
+                }
             }
-        }
-        .task {
-            try? await Task.sleep(nanoseconds: 500_000_000)
-            proxy.scrollTo("Bottom", anchor: .bottom)
-            isAtBottom = true
         }
     }
     
@@ -488,10 +481,6 @@ struct ChatView: View {
         return searchResult.matches.first { $0.messageIndex == messageIndex }
     }
     
-    private func handleBottomAnchorChange(_ bottomY: CGFloat, containerHeight: CGFloat) {
-        let threshold: CGFloat = 50
-        isAtBottom = (bottomY <= containerHeight + threshold)
-    }
     
     private func jumpToFirstMatch(_ result: SearchResult, proxy: ScrollViewProxy) {
         guard let firstMatch = result.matches.first else { return }
