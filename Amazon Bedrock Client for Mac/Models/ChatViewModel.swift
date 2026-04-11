@@ -929,12 +929,17 @@ class ChatViewModel: ObservableObject {
         // Get Bedrock messages in AWS SDK format
         let bedrockMessages = try conversationHistory.map { try convertToBedrockMessage($0, modelId: chatModel.id) }
         
-        // Convert to system prompt format used by AWS SDK
+        // Build system prompt — append tool availability notice when tools are not available
+        var finalSystemPrompt = systemPrompt
+        if toolConfig == nil && !finalSystemPrompt.isEmpty {
+            finalSystemPrompt += "\n\nYou do not have access to any external tools, web browsing, or URL fetching capabilities. Do not simulate or fabricate tool calls or their responses. If a user's request requires external access, clearly explain that you cannot perform that action."
+        }
+
         let systemContentBlock: [AWSBedrockRuntime.BedrockRuntimeClientTypes.SystemContentBlock]? =
-        systemPrompt.isEmpty ? nil : [.text(systemPrompt)]
-        
+        finalSystemPrompt.isEmpty ? nil : [.text(finalSystemPrompt)]
+
         logger.info("Starting converseStream request with model ID: \(chatModel.id)")
-        
+
         // Start the tool cycling process
         try await processToolCycles(bedrockMessages: bedrockMessages, systemContentBlock: systemContentBlock, toolConfig: toolConfig, turnCount: turn_count, maxTurns: maxTurns)
     }
@@ -2820,13 +2825,18 @@ class ChatViewModel: ObservableObject {
         
         // Get tool configurations if MCP is enabled (but disable for non-streaming for now)
         let toolConfig: AWSBedrockRuntime.BedrockRuntimeClientTypes.ToolConfiguration? = nil
-        
+
         // Get Bedrock messages in AWS SDK format
         let bedrockMessages = try conversationHistory.map { try convertToBedrockMessage($0, modelId: chatModel.id) }
-        
-        // Convert to system prompt format used by AWS SDK
+
+        // Build system prompt — append tool availability notice when tools are not available
+        var finalSystemPrompt = systemPrompt
+        if toolConfig == nil && !finalSystemPrompt.isEmpty {
+            finalSystemPrompt += "\n\nYou do not have access to any external tools, web browsing, or URL fetching capabilities. Do not simulate or fabricate tool calls or their responses. If a user's request requires external access, clearly explain that you cannot perform that action."
+        }
+
         let systemContentBlock: [AWSBedrockRuntime.BedrockRuntimeClientTypes.SystemContentBlock]? =
-        systemPrompt.isEmpty ? nil : [.text(systemPrompt)]
+        finalSystemPrompt.isEmpty ? nil : [.text(finalSystemPrompt)]
         
         logger.info("Starting non-streaming converse request with model ID: \(chatModel.id)")
         
