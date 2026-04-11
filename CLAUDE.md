@@ -117,3 +117,10 @@ Dependencies are managed as Swift Package Manager packages referenced directly i
 ## CI/CD
 
 GitHub Actions workflow (`.github/workflows/macos_build.yml`) builds on macOS 26 / Xcode 26, signs with Developer ID, notarizes, packages as DMG, and on version tags creates a GitHub Release and bumps the Homebrew cask (`didhd/tap/amazon-bedrock-client`). Build number is set from the first 8 chars of the commit SHA.
+
+## Git Conventions
+
+When creating commits, use the following co-author line:
+```
+Co-Authored-By: Claude <noreply@anthropic.com>
+```
