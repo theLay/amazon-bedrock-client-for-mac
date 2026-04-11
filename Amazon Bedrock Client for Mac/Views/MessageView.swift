@@ -396,6 +396,122 @@ struct GeneratedVideoView: View {
     }
 }
 
+// MARK: - ToolUsesView (parallel tool execution display)
+struct ToolUsesView: View {
+    let toolUses: [ToolInfo]
+    let toolResults: [ToolResultEntry]?
+    let fontSize: CGFloat
+    let searchRanges: [NSRange]
+
+    @Environment(\.colorScheme) private var colorScheme: ColorScheme
+
+    private func statusIcon(for toolId: String) -> (symbol: String, color: Color) {
+        guard let results = toolResults,
+              let entry = results.first(where: { $0.toolUseId == toolId }) else {
+            return ("circle.dotted", .secondary)
+        }
+        switch entry.status {
+        case "success": return ("checkmark.circle.fill", .green)
+        case "error": return ("xmark.circle.fill", .red)
+        case "running": return ("arrow.trianglehead.2.clockwise.rotate.90", .orange)
+        default: return ("circle.dotted", .secondary)
+        }
+    }
+
+    private func resultText(for toolId: String) -> String? {
+        guard let results = toolResults,
+              let entry = results.first(where: { $0.toolUseId == toolId }),
+              !entry.result.isEmpty, entry.status != "running" else { return nil }
+        return entry.result
+    }
+
+    private var completedCount: Int {
+        toolResults?.filter { $0.status != "running" }.count ?? 0
+    }
+
+    private var headerText: String {
+        if toolUses.count == 1 {
+            return "Using tool: \(toolUses[0].name)"
+        }
+        let total = toolUses.count
+        let done = completedCount
+        if done < total {
+            return "Using \(total) tools in parallel (\(done)/\(total) completed)"
+        }
+        return "Used \(total) tools in parallel"
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            // Header
+            HStack(spacing: 6) {
+                if toolUses.count > 1 {
+                    Image(systemName: "arrow.triangle.branch")
+                        .font(.system(size: fontSize - 4))
+                        .foregroundColor(.secondary)
+                }
+                Text(headerText)
+                    .font(.system(size: fontSize - 1, weight: .medium))
+                    .foregroundColor(.secondary)
+            }
+
+            // Individual tool entries
+            ForEach(toolUses, id: \.id) { tool in
+                let (symbol, color) = statusIcon(for: tool.id)
+                let result = resultText(for: tool.id)
+
+                ExpandableMarkdownItem(
+                    header: tool.name,
+                    text: formatInput(tool.input) + (result.map { "\n\n**Result:**\n\($0)" } ?? ""),
+                    fontSize: fontSize,
+                    searchRanges: searchRanges
+                )
+                .overlay(alignment: .topTrailing) {
+                    Image(systemName: symbol)
+                        .font(.system(size: fontSize - 4))
+                        .foregroundColor(color)
+                        .padding(.trailing, 4)
+                        .padding(.top, 4)
+                }
+            }
+        }
+        .padding(.vertical, 2)
+        .padding(.horizontal, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(colorScheme == .dark
+                    ? Color.white.opacity(0.03)
+                    : Color.black.opacity(0.02))
+        )
+    }
+
+    private func formatInput(_ input: JSONValue) -> String {
+        return "```json\n\(prettyPrintJSON(input, indent: 0))\n```"
+    }
+
+    private func prettyPrintJSON(_ json: JSONValue, indent: Int) -> String {
+        let indentStr = String(repeating: "  ", count: indent)
+        let childIndent = String(repeating: "  ", count: indent + 1)
+        switch json {
+        case .string(let s): return "\"\(s.replacingOccurrences(of: "\"", with: "\\\""))\""
+        case .number(let n): return "\(n)"
+        case .bool(let b): return b ? "true" : "false"
+        case .null: return "null"
+        case .array(let arr):
+            if arr.isEmpty { return "[]" }
+            return "[\n" + arr.enumerated().map { i, v in
+                "\(childIndent)\(prettyPrintJSON(v, indent: indent + 1))" + (i < arr.count - 1 ? "," : "")
+            }.joined(separator: "\n") + "\n\(indentStr)]"
+        case .object(let obj):
+            if obj.isEmpty { return "{}" }
+            let keys = obj.keys.sorted()
+            return "{\n" + keys.enumerated().map { i, k in
+                "\(childIndent)\"\(k)\": \(prettyPrintJSON(obj[k]!, indent: indent + 1))" + (i < keys.count - 1 ? "," : "")
+            }.joined(separator: "\n") + "\n\(indentStr)}"
+        }
+    }
+}
+
 // MARK: - ExpandableMarkdownItem
 struct ExpandableMarkdownItem: View {
     @State private var isExpanded = false
@@ -643,22 +759,11 @@ struct MessageView: View {
                 )
             }
             
-            // Tool use information display
-            if let toolUse = message.toolUse {
-                ExpandableMarkdownItem(
-                    header: "Using tool: \(toolUse.name)",
-                    text: formatToolInput(toolUse.input),
-                    fontSize: fontSize + adjustedFontSize - 2,
-                    searchRanges: searchResult?.ranges ?? []
-                )
-                .padding(.vertical, 2)
-            }
-
-            // Expandable tool result section
-            if let toolResult = message.toolResult, !toolResult.isEmpty {
-                ExpandableMarkdownItem(
-                    header: "Tool Result",
-                    text: toolResult,
+            // Tool use / result display (supports parallel tools)
+            if let toolUses = message.toolUses, !toolUses.isEmpty {
+                ToolUsesView(
+                    toolUses: toolUses,
+                    toolResults: message.toolResults,
                     fontSize: fontSize + adjustedFontSize - 2,
                     searchRanges: searchResult?.ranges ?? []
                 )

@@ -13,13 +13,13 @@ Open and build in Xcode:
 open "Amazon Bedrock Client for Mac.xcodeproj"
 ```
 
-CLI build (used in CI):
+CLI build:
 ```bash
+xcrun agvtool new-version -all $(date -u +"%Y%m%d") && \
 xcodebuild clean build \
   -project "Amazon Bedrock Client for Mac.xcodeproj" \
   -scheme "Amazon Bedrock Client for Mac" \
   -configuration Release \
-  -arch x86_64 -arch arm64 \
   -derivedDataPath DerivedData \
   -skipMacroValidation
 ```
