@@ -2676,12 +2676,12 @@ class ChatViewModel: ObservableObject {
     
     /// Updates the chat title with a summary of the input.
     func updateChatTitle(with input: String) async {
-        // Skip auto title generation if chat was manually renamed
-        if chatModel.isManuallyRenamed {
+        // Only generate title for new chats that haven't been titled yet
+        if chatModel.isManuallyRenamed || chatModel.title != "New Chat" {
             return
         }
         let summaryPrompt = """
-        Summarize user input <input>\(input)</input> as short as possible. Just in few words without punctuation. It should not be more than 5 words. Do as best as you can. please do summary this without punctuation:
+        Summarize user input <input>\(input)</input> as short as possible in the same language as the input. Just in few words without punctuation. It should not be more than 5 words. Do as best as you can. please do summary this without punctuation:
         """
         
         // Create message for converseStream
