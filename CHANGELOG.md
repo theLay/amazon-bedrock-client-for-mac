@@ -10,6 +10,7 @@
 
 ### 새 기능
 - **MCP 도구 병렬 실행** (2026-04-11) — 모델이 한 응답에서 여러 tool을 요청하면 동시에 실행하고, 각 tool의 실시간 상태(실행중/성공/실패)를 채팅 UI에 표시 ([PR #2](https://github.com/theLay/amazon-bedrock-client-for-mac/pull/2))
+- **Claude Opus 4.7 모델 지원** (2026-05-01) — temperature deprecated 대응, adaptive thinking(effort 기반) 지원
 - **Claude Sonnet 4.6 & Opus 4.6 모델 지원** (2026-03-14) — 최신 Anthropic 모델의 감지 로직, 추론 설정, 기능 플래그 추가
 
 ### 버그 수정
