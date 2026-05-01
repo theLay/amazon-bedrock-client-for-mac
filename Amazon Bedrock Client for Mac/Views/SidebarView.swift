@@ -226,9 +226,9 @@ struct SidebarView: View {
     @State private var lastSortTime: Date = Date(timeIntervalSince1970: 0)
     @State private var sortingInProgress: Bool = false
     private let sortingThrottleInterval: TimeInterval = 0.5 // Minimum interval between sorting operations
-    
-    // Timer to periodically update chat dates - reduced frequency
-    let timer = Timer.publish(every: 10, on: .main, in: .common).autoconnect()
+
+    @State private var midnightTimer: Timer?
+    @Environment(\.scenePhase) private var scenePhase
     
     private let dateFormatter: DateFormatter = {
         let formatter = DateFormatter()
@@ -299,10 +299,10 @@ struct SidebarView: View {
                 .padding(.bottom, 4)
             
             chatListView
-                .onReceive(timer) { _ in
-                    // Only sort if enough time has passed since last update
-                    if Date().timeIntervalSince(lastSortTime) > 10 {
+                .onChange(of: scenePhase) { _, newPhase in
+                    if newPhase == .active {
                         throttledOrganizeChatsByDate()
+                        scheduleMidnightTimer()
                     }
                 }
                 .onChange(of: appCoordinator.shouldCreateNewChat) { _, newValue in
@@ -329,8 +329,12 @@ struct SidebarView: View {
         }
         .background(Color(NSColor.controlBackgroundColor).opacity(0.8))
         .onAppear {
-            // Initial organization only - NO search indexing on startup
             organizeChatsInitial()
+            scheduleMidnightTimer()
+        }
+        .onDisappear {
+            midnightTimer?.invalidate()
+            midnightTimer = nil
         }
         .onChange(of: chatManager.chats) { oldChats, newChats in
             // Immediately reorganize when chat count changes (add/remove)
@@ -783,6 +787,23 @@ struct SidebarView: View {
         }
     }
     
+    private func scheduleMidnightTimer() {
+        midnightTimer?.invalidate()
+        let calendar = Calendar.current
+        guard let nextMidnight = calendar.nextDate(
+            after: Date(),
+            matching: DateComponents(hour: 0, minute: 0, second: 0),
+            matchingPolicy: .nextTime
+        ) else { return }
+        let interval = nextMidnight.timeIntervalSinceNow + 1
+        midnightTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: false) { [self] _ in
+            Task { @MainActor in
+                throttledOrganizeChatsByDate()
+                scheduleMidnightTimer()
+            }
+        }
+    }
+
     // Initial organization (run once at app startup)
     private func organizeChatsInitial() {
         throttledOrganizeChatsByDate()

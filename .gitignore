@@ -64,3 +64,6 @@ Podfile.lock
 # Generated files
 DerivedData/
 
+# Backup
+backup/
+
