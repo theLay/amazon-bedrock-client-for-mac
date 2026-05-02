@@ -22,7 +22,6 @@ struct ChatView: View {
     @State private var autoScrollEnabled: Bool = true
     @State private var scrollMonitor: Any?
     @State private var scrollThrottleTask: Task<Void, Never>?
-    @State private var isProgrammaticScroll: Bool = false
     
     // Font size adjustment state
     @AppStorage("adjustedFontSize") private var adjustedFontSize: Int = -1
@@ -254,11 +253,7 @@ struct ChatView: View {
             scrollThrottleTask?.cancel()
         }
         .onPreferenceChange(ScrollOffsetPreferenceKey.self) { maxY in
-            let atBottom = maxY < outerGeo.size.height + 50
-            isAtBottom = atBottom
-            if atBottom && !isProgrammaticScroll {
-                autoScrollEnabled = true
-            }
+            isAtBottom = maxY < outerGeo.size.height + 50
         }
         .onChange(of: viewModel.messages) { _, _ in
             guard autoScrollEnabled && searchQuery.isEmpty else { return }
@@ -266,16 +261,13 @@ struct ChatView: View {
             scrollThrottleTask = Task {
                 try? await Task.sleep(nanoseconds: 100_000_000)
                 if autoScrollEnabled, let lastIdx = viewModel.messages.indices.last {
-                    isProgrammaticScroll = true
                     proxy.scrollTo(lastIdx, anchor: .bottom)
-                    try? await Task.sleep(nanoseconds: 50_000_000)
-                    isProgrammaticScroll = false
                 }
                 scrollThrottleTask = nil
             }
         }
-        .onChange(of: viewModel.isSending) { _, isSending in
-            if isSending {
+        .onChange(of: viewModel.isMessageBarDisabled) { _, disabled in
+            if disabled {
                 autoScrollEnabled = true
             }
         }
