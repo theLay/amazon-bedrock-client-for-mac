@@ -18,8 +18,11 @@ struct ChatView: View {
     @FocusState private var isSearchFocused: Bool
     @SwiftUI.Environment(\.colorScheme) private var colorScheme: ColorScheme
     
-    @State private var isAtBottom: Bool = false
-    @State private var isSearchActive: Bool = false // Add search state tracking
+    @State private var isAtBottom: Bool = true
+    @State private var autoScrollEnabled: Bool = true
+    @State private var scrollMonitor: Any?
+    @State private var scrollThrottleTask: Task<Void, Never>?
+    @State private var isProgrammaticScroll: Bool = false
     
     // Font size adjustment state
     @AppStorage("adjustedFontSize") private var adjustedFontSize: Int = -1
@@ -187,13 +190,13 @@ struct ChatView: View {
     }
     
     // MARK: - Message Scroll View
-    
+
     private var messageScrollView: some View {
         GeometryReader { outerGeo in
             ScrollViewReader { proxy in
                 ZStack {
                     scrollableMessageList(outerGeo: outerGeo, proxy: proxy)
-                    enhancedScrollToBottomButton(outerGeo: outerGeo, proxy: proxy)
+                    scrollToBottomButton(proxy: proxy)
                 }
                 .onChange(of: searchResult) { _, newResult in
                     jumpToFirstMatch(newResult, proxy: proxy)
@@ -204,64 +207,81 @@ struct ChatView: View {
             }
         }
     }
-    
+
     private func scrollableMessageList(
         outerGeo: GeometryProxy,
         proxy: ScrollViewProxy
     ) -> some View {
-        let messageList = LazyVStack(spacing: 2) {
-            Color.clear
-                .frame(height: 1)
-                .id("Top")
-            ForEach(Array(viewModel.messages.enumerated()), id: \.offset) { idx, message in
-                MessageView(
-                    message: message, 
-                    searchResult: getSearchResultForMessage(idx),
-                    adjustedFontSize: CGFloat(adjustedFontSize)
-                )
+        ScrollView {
+            LazyVStack(spacing: 2) {
+                ForEach(Array(viewModel.messages.enumerated()), id: \.offset) { idx, message in
+                    MessageView(
+                        message: message,
+                        searchResult: getSearchResultForMessage(idx),
+                        adjustedFontSize: CGFloat(adjustedFontSize)
+                    )
                     .id(idx)
                     .frame(maxWidth: .infinity)
+                }
             }
-            Color.clear
-                .frame(height: 1)
-                .id("Bottom")
-                .onAppear { isAtBottom = true }
-                .onDisappear { isAtBottom = false }
+            .padding()
+            .background(
+                GeometryReader { contentGeo in
+                    Color.clear
+                        .preference(
+                            key: ScrollOffsetPreferenceKey.self,
+                            value: contentGeo.frame(in: .named("chatScroll")).maxY
+                        )
+                }
+            )
         }
-        .padding()
-        
-        return ScrollView {
-            messageList
-        }
-        .defaultScrollAnchor(.top)
+        .coordinateSpace(name: "chatScroll")
+        .defaultScrollAnchor(.bottom)
         .modifier(ScrollEdgeEffectModifier())
-        .onChange(of: viewModel.messages) { _, _ in
-            // If the user was at bottom and not searching, wait briefly for layout and scroll down again
-            if isAtBottom && searchQuery.isEmpty {
-                Task {
-                    try? await Task.sleep(nanoseconds: 50_000_000) // 0.05s
-                    proxy.scrollTo("Bottom", anchor: .bottom)
+        .onAppear {
+            scrollMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { event in
+                if event.scrollingDeltaY > 0 && event.momentumPhase == [] {
+                    autoScrollEnabled = false
                 }
+                return event
             }
         }
-        // Scroll to bottom when new messages arrive during active conversation
-        .onChange(of: viewModel.messages.count) { oldCount, newCount in
-            if viewModel.isSending && searchQuery.isEmpty {
-                proxy.scrollTo("Bottom", anchor: .bottom)
-            } else if oldCount == 0 && newCount > 0 {
-                // Initial load — wait for layout to settle, then scroll to top
-                Task {
-                    try? await Task.sleep(nanoseconds: 100_000_000) // 0.1s
-                    proxy.scrollTo("Top", anchor: .top)
+        .onDisappear {
+            if let monitor = scrollMonitor {
+                NSEvent.removeMonitor(monitor)
+                scrollMonitor = nil
+            }
+            scrollThrottleTask?.cancel()
+        }
+        .onPreferenceChange(ScrollOffsetPreferenceKey.self) { maxY in
+            let atBottom = maxY < outerGeo.size.height + 50
+            isAtBottom = atBottom
+            if atBottom && !isProgrammaticScroll {
+                autoScrollEnabled = true
+            }
+        }
+        .onChange(of: viewModel.messages) { _, _ in
+            guard autoScrollEnabled && searchQuery.isEmpty else { return }
+            guard scrollThrottleTask == nil else { return }
+            scrollThrottleTask = Task {
+                try? await Task.sleep(nanoseconds: 100_000_000)
+                if autoScrollEnabled, let lastIdx = viewModel.messages.indices.last {
+                    isProgrammaticScroll = true
+                    proxy.scrollTo(lastIdx, anchor: .bottom)
+                    try? await Task.sleep(nanoseconds: 50_000_000)
+                    isProgrammaticScroll = false
                 }
+                scrollThrottleTask = nil
+            }
+        }
+        .onChange(of: viewModel.isSending) { _, isSending in
+            if isSending {
+                autoScrollEnabled = true
             }
         }
     }
-    
-    private func enhancedScrollToBottomButton(
-        outerGeo: GeometryProxy,
-        proxy: ScrollViewProxy
-    ) -> some View {
+
+    private func scrollToBottomButton(proxy: ScrollViewProxy) -> some View {
         Group {
             if !isAtBottom {
                 VStack {
@@ -270,8 +290,10 @@ struct ChatView: View {
                         Spacer()
                         Button {
                             withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
-                                proxy.scrollTo("Bottom", anchor: .bottom)
-                                isAtBottom = true
+                                if let lastIdx = viewModel.messages.indices.last {
+                                    proxy.scrollTo(lastIdx, anchor: .bottom)
+                                }
+                                autoScrollEnabled = true
                             }
                         } label: {
                             Image(systemName: "arrow.down")
@@ -504,16 +526,12 @@ struct ChatView: View {
     }
     
     private func scrollToMatch(messageIndex: Int, matchIndex: Int, proxy: ScrollViewProxy) {
-        // Temporarily disable auto-scroll to bottom
-        let wasAtBottom = isAtBottom
-        isAtBottom = false
-        
+        autoScrollEnabled = false
+
         withAnimation(.easeInOut(duration: 0.3)) {
-            // First scroll to the message
             proxy.scrollTo(messageIndex, anchor: .center)
         }
-        
-        // Then notify the specific message to highlight and scroll to the exact match
+
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
             NotificationCenter.default.post(
                 name: NSNotification.Name("ScrollToSearchMatch"),
@@ -524,14 +542,6 @@ struct ChatView: View {
                     "searchQuery": self.searchQuery
                 ]
             )
-            
-            // Keep auto-scroll disabled for a bit longer to prevent interference
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-                // Only restore auto-scroll if we were actually at bottom before
-                if wasAtBottom {
-                    self.isAtBottom = true
-                }
-            }
         }
     }
     
@@ -646,3 +656,9 @@ struct ChatView: View {
     }
 }
 
+private struct ScrollOffsetPreferenceKey: PreferenceKey {
+    nonisolated(unsafe) static var defaultValue: CGFloat = .zero
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = nextValue()
+    }
+}
