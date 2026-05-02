@@ -24,6 +24,7 @@
     - [Network and Connectivity Issues](#network-and-connectivity-issues)
     - [Performance and Timeout Issues](#performance-and-timeout-issues)
     - [Getting Help and Reporting Issues](#getting-help-and-reporting-issues)
+  - [Developer Notes: LazyVStack Auto-Scroll](#developer-notes-lazyvstack-auto-scroll)
 
 ---
 
@@ -371,3 +372,88 @@ When reporting issues, include:
 - Check [AWS Service Health Dashboard](https://health.aws.amazon.com/health/status)
 
 The client uses AWS Swift SDK internally, so behavior may differ from other AWS tools. Start with the simplest credential configuration and add complexity as needed.
+
+## Developer Notes: LazyVStack Auto-Scroll
+
+The chat view uses a `LazyVStack` inside a `ScrollView` with auto-scroll during streaming responses. This was one of the trickiest parts of the UI to get right. This section documents the approaches tried and why the current implementation was chosen.
+
+### Requirements
+
+1. Auto-scroll to bottom during streaming responses
+2. Stop auto-scroll when the user scrolls up
+3. Resume auto-scroll when the user sends a new message
+
+### Approaches That Did NOT Work
+
+**1. Hidden anchor view with `scrollTo("Bottom")`**
+
+```swift
+Color.clear.frame(height: 1).id("Bottom")
+proxy.scrollTo("Bottom", anchor: .bottom)
+```
+
+`LazyVStack` only materializes visible views. Scrolling to an invisible zero-height anchor causes layout corruption — content disappears or jumps to wrong positions.
+
+**2. `scrollPosition(id:)` binding as a write target**
+
+```swift
+@State private var scrollPosition: Int?
+// ...
+scrollPosition = messages.count - 1  // triggers scroll
+```
+
+Setting `scrollPosition` directly causes unstable scrolling — the view jumps erratically, scrollbar size becomes inaccurate, and layout breaks after scrollbar drag interaction.
+
+**3. Mixing `scrollPosition(id:)` binding with `proxy.scrollTo()`**
+
+Even using `scrollPosition` read-only alongside `proxy.scrollTo()` causes conflicts. After scrollbar drag, `proxy.scrollTo` triggers intermediate `scrollPosition` change events that toggle `autoScrollEnabled` on/off rapidly, causing flickering and layout corruption.
+
+**4. Relying solely on `GeometryReader` + `PreferenceKey` for scroll direction detection**
+
+`onPreferenceChange` fires after render, but `onChange(of: messages)` fires before — creating a race condition where `isAtBottom` hasn't updated yet when the scroll decision is made.
+
+**5. Calling `scrollTo` on every token during streaming**
+
+Causes scrollbar flickering and layout thrashing, especially with content that changes size rapidly (e.g., markdown tables). Wrapping in `withAnimation` makes it worse as animations accumulate.
+
+### Current Implementation (ChatView.swift)
+
+The stable solution combines three independent mechanisms, each handling one concern:
+
+```
+User scroll detection:  NSEvent monitor (.scrollWheel)
+Bottom position check:  GeometryReader + PreferenceKey
+Auto-scroll execution:  proxy.scrollTo(lastMessageIndex) with 100ms throttle
+```
+
+**Key state variables:**
+- `autoScrollEnabled` — whether streaming responses should auto-scroll
+- `isAtBottom` — whether the scroll position is near the bottom (for showing the scroll-to-bottom button)
+
+**How `autoScrollEnabled` changes:**
+
+| Trigger | Sets to | Condition |
+|---|---|---|
+| `NSEvent` scrollWheel (deltaY > 0, momentumPhase == []) | `false` | User scrolls up via mouse wheel or trackpad |
+| `viewModel.isMessageBarDisabled` becomes `true` | `true` | User sends a new message |
+| Scroll-to-bottom button tap | `true` | User explicitly requests bottom |
+| View initialization | `true` | Default state for new conversations |
+
+**Why `momentumPhase == []`:** macOS trackpad generates momentum and elastic bounce events after the user lifts their finger. These have `momentumPhase != []` and must be filtered out to avoid false "user scrolled up" detection.
+
+**Why 100ms throttle:** Without throttling, `proxy.scrollTo` fires on every message mutation during streaming, causing scrollbar flickering especially with rapidly resizing content like markdown tables.
+
+**Why `isMessageBarDisabled` instead of `isSending`:** `isMessageBarDisabled` is the property actually set by `sendMessageAsync()` at send start and cleared at completion. `isSending` was declared but never set to `true`.
+
+### Known Limitations
+
+- **Scrollbar drag does not stop auto-scroll:** The `NSEvent` monitor only captures `.scrollWheel` events. Scrollbar drag uses mouse events that are difficult to distinguish from normal clicks without side effects. This is an acceptable trade-off — mouse wheel and trackpad gestures cover the primary use case.
+- **No auto-scroll resume by scrolling to bottom during streaming:** Intentionally omitted. Scroll-position-based re-enablement (`onPreferenceChange`) conflicts with streaming content growth — the bottom threshold is never reached because content keeps growing. The scroll-to-bottom button provides manual resume.
+
+### Key Lessons
+
+1. **Always scroll to a real message ID**, never to a hidden anchor view — `LazyVStack` will corrupt its layout
+2. **Never mix `scrollPosition(id:)` binding with `proxy.scrollTo()`** — choose one scroll mechanism, not both
+3. **Use `NSEvent` for scroll input detection, not `GeometryReader`** — `NSEvent` fires before render, avoiding race conditions with `onChange(of: messages)`
+4. **Filter trackpad momentum/bounce** with `momentumPhase == []` — only direct user input should disable auto-scroll
+5. **Throttle `scrollTo` calls** during streaming — unthrottled calls cause flickering with rapidly changing content
