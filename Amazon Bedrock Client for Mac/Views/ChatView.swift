@@ -255,7 +255,11 @@ struct ChatView: View {
         .onPreferenceChange(ScrollOffsetPreferenceKey.self) { maxY in
             isAtBottom = maxY < outerGeo.size.height + 50
         }
-        .onChange(of: viewModel.messages) { _, _ in
+        .onChange(of: viewModel.messages) { _, newMessages in
+            // Re-enable auto-scroll when the user sends a new message, regardless of prior scroll state.
+            if newMessages.last?.user == "User" {
+                autoScrollEnabled = true
+            }
             guard autoScrollEnabled && searchQuery.isEmpty else { return }
             guard scrollThrottleTask == nil else { return }
             scrollThrottleTask = Task {
