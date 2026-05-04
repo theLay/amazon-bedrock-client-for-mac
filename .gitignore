@@ -64,6 +64,10 @@ Podfile.lock
 # Generated files
 DerivedData/
 
+# Code coverage
+*.profraw
+*.profdata
+
 # Backup
 backup/
 
