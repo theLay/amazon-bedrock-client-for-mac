@@ -2892,13 +2892,19 @@ class ChatViewModel: ObservableObject {
         
         // Capture backend locally to avoid data races
         let backend = await MainActor.run { backendModel.backend }
-        
+
+        // Inject the current time into the system prompt (matches streaming path behavior).
+        let finalSystemContent: [AWSBedrockRuntime.BedrockRuntimeClientTypes.SystemContentBlock]? =
+            backend.isSystemPromptSupported(chatModel.id)
+                ? backend.prependCurrentTimeToSystem(systemContentBlock)
+                : nil
+
         // Use the non-streaming Converse API
         let request = AWSBedrockRuntime.ConverseInput(
             inferenceConfig: nil,
             messages: bedrockMessages,
             modelId: chatModel.id,
-            system: backend.isSystemPromptSupported(chatModel.id) ? systemContentBlock : nil,
+            system: finalSystemContent,
             toolConfig: toolConfig
         )
         

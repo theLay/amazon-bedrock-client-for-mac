@@ -9,6 +9,7 @@
 ## [Unreleased]
 
 ### 새 기능
+- **현재 시간 자동 주입** (2026-05-04) — 모든 Converse API 호출의 시스템 프롬프트에 사용자 로컬 타임존 기준 현재 시간(요일 + ISO 8601)을 자동 주입. 모델이 학습 컷오프 이후 날짜를 "미래 정보"로 의심해 답변을 거부하는 문제 해결
 - **Claude Opus 4.7 모델 지원** (2026-05-01) — temperature deprecated 대응, adaptive thinking(effort 기반) 지원
 - **MCP 도구 병렬 실행** (2026-04-11) — 모델이 한 응답에서 여러 tool을 요청하면 동시에 실행하고, 각 tool의 실시간 상태(실행중/성공/실패)를 채팅 UI에 표시 ([PR #2](https://github.com/theLay/amazon-bedrock-client-for-mac/pull/2))
 - **Claude Sonnet 4.6 & Opus 4.6 모델 지원** (2026-03-14) — 최신 Anthropic 모델의 감지 로직, 추론 설정, 기능 플래그 추가

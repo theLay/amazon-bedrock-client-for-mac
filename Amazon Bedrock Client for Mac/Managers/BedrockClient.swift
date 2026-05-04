@@ -621,6 +621,39 @@ class Backend: Equatable, @unchecked Sendable {
         }
     }
     
+    /// Build a "Current time" prefix that is injected into the system prompt on every Converse call
+    /// so the model can answer date/time questions correctly even when the user is past the model's
+    /// training cutoff. Uses ISO 8601 with the user's local timezone offset plus the weekday.
+    private func currentTimeSystemPrefix() -> String {
+        let now = Date()
+
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+        formatter.timeZone = TimeZone.current
+        let timestamp = formatter.string(from: now)
+
+        let weekdayFormatter = DateFormatter()
+        weekdayFormatter.locale = Locale(identifier: "en_US_POSIX")
+        weekdayFormatter.dateFormat = "EEEE"
+        weekdayFormatter.timeZone = TimeZone.current
+        let weekday = weekdayFormatter.string(from: now)
+
+        return "Current time: \(weekday), \(timestamp)"
+    }
+
+    /// Prepend the current-time line to an existing system content array so the model always
+    /// has an authoritative "now" reference. Creates a new array when none was provided.
+    func prependCurrentTimeToSystem(
+        _ systemContent: [BedrockRuntimeClientTypes.SystemContentBlock]?
+    ) -> [BedrockRuntimeClientTypes.SystemContentBlock] {
+        let timePrefix = currentTimeSystemPrefix()
+        var result: [BedrockRuntimeClientTypes.SystemContentBlock] = [.text(timePrefix)]
+        if let existing = systemContent {
+            result.append(contentsOf: existing)
+        }
+        return result
+    }
+
     /// Add cache control to messages for prompt caching
     private func addCacheControlToMessages(_ messages: [BedrockRuntimeClientTypes.Message]) -> [BedrockRuntimeClientTypes.Message] {
         guard !messages.isEmpty else { return messages }
@@ -1246,12 +1279,17 @@ class Backend: Equatable, @unchecked Sendable {
             logger.info("Prompt caching enabled for model: \(modelId)")
         }
         
+        // Inject the current time into the system prompt so the model has an authoritative
+        // "now" reference for every request. Models that don't support system prompts get nil.
+        let finalSystemContent: [BedrockRuntimeClientTypes.SystemContentBlock]? =
+            isSystemPromptSupported(modelId) ? prependCurrentTimeToSystem(systemContent) : nil
+
         // Create converse stream request
         var request = ConverseStreamInput(
             inferenceConfig: config,
             messages: processedMessages,
             modelId: modelId,
-            system: isSystemPromptSupported(modelId) ? systemContent : nil
+            system: finalSystemContent
         )
         
         // Add tool configuration if provided
