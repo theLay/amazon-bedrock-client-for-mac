@@ -213,7 +213,7 @@ struct ChatView: View {
     ) -> some View {
         ScrollView {
             LazyVStack(spacing: 2) {
-                ForEach(Array(viewModel.messages.enumerated()), id: \.offset) { idx, message in
+                ForEach(Array(viewModel.messages.enumerated()), id: \.element.id) { idx, message in
                     MessageView(
                         message: message,
                         searchResult: getSearchResultForMessage(idx),

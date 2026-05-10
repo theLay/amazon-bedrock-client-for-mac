@@ -17,29 +17,33 @@ struct LazyMarkdownView: View {
     let fontSize: CGFloat
     let searchRanges: [NSRange]
     @State private var height: CGFloat = .zero
-    
-    private let parser: ExtendedMarkdownParser
-    private let htmlGenerator: CustomHtmlGenerator
-    
+    @State private var cachedHTML: String
+
     init(text: String, fontSize: CGFloat, searchRanges: [NSRange] = []) {
         self.text = text
         self.fontSize = fontSize
         self.searchRanges = searchRanges
-        self.parser = ExtendedMarkdownParser()
-        self.htmlGenerator = CustomHtmlGenerator()
+        // Parse once at view identity creation; `height` changes re-evaluate body
+        // but must not re-run the parser, which was causing a layout feedback loop.
+        self._cachedHTML = State(initialValue: Self.generateHTML(from: text))
     }
-    
+
     var body: some View {
         HTMLStringView(
-            htmlContent: generateHTML(from: text),
+            htmlContent: cachedHTML,
             fontSize: fontSize,
             searchRanges: searchRanges,
             dynamicHeight: $height
         )
         .frame(height: height)
+        .onChange(of: text) { _, newText in
+            cachedHTML = Self.generateHTML(from: newText)
+        }
     }
-    
-    private func generateHTML(from markdown: String) -> String {
+
+    private static func generateHTML(from markdown: String) -> String {
+        let parser = ExtendedMarkdownParser()
+        let htmlGenerator = CustomHtmlGenerator()
         let document = parser.parse(markdown)
         return htmlGenerator.generate(doc: document)
     }
@@ -1123,15 +1127,23 @@ struct HTMLStringView: NSViewRepresentable {
     }
     
     func updateNSView(_ nsView: WKWebView, context: Context) {
+        // Skip the expensive HTML wrapping/highlighting when inputs are unchanged.
+        // Without this, every SwiftUI layout pass re-runs these string builds and
+        // keeps the main thread pinned in a layout feedback loop.
+        if htmlContent == context.coordinator.lastRawHTMLContent
+            && searchRanges == context.coordinator.searchRanges {
+            return
+        }
+        context.coordinator.lastRawHTMLContent = htmlContent
+        context.coordinator.searchRanges = searchRanges
+
         let htmlWithHighlights = addSearchHighlights(to: wrapHTMLContent(htmlContent))
-        
+
         // Only reload if content has actually changed to preserve text selection
         if htmlWithHighlights != context.coordinator.lastLoadedContent {
             context.coordinator.lastLoadedContent = htmlWithHighlights
             nsView.loadHTMLString(htmlWithHighlights, baseURL: nil)
         }
-        
-        context.coordinator.searchRanges = searchRanges
     }
     
     private func addSearchHighlights(to html: String) -> String {
@@ -1174,6 +1186,7 @@ struct HTMLStringView: NSViewRepresentable {
         var parent: HTMLStringView
         var searchRanges: [NSRange] = []
         var lastLoadedContent: String = "" // Track last loaded content to prevent unnecessary reloads
+        var lastRawHTMLContent: String = "" // Skip wrapHTMLContent/addSearchHighlights when inputs are unchanged
         private var scrollToMatchNotification: AnyCancellable?
         
         init(_ parent: HTMLStringView) {
