@@ -15,6 +15,7 @@
 - **Claude Sonnet 4.6 & Opus 4.6 모델 지원** (2026-03-14) — 최신 Anthropic 모델의 감지 로직, 추론 설정, 기능 플래그 추가
 
 ### 버그 수정
+- **채팅 히스토리 선택 시 hang 후속 수정** (2026-05-19) — 5월 10일 수정 이후에도 가끔 재발하던 hang을 sample 분석으로 추적해 잔존 피드백 루프 두 곳을 차단. WKWebView 콘텐츠 높이가 1pt 미만 변할 때는 `@State` 쓰기를 생략하고, `GeometryReader`+`PreferenceKey`로 스크롤 위치를 추적하던 방식을 LazyVStack 외부의 sentinel 뷰로 교체. 부수 효과로 유휴 CPU도 1~2%p 추가 감소
 - **채팅 히스토리 선택 시 hang 해결** (2026-05-10) — 일부 히스토리 선택 시 beachball + CPU 100%로 메시지가 표시되지 않던 문제 수정. Markdown 파싱과 HTML 조립을 캐싱하고 ForEach id를 안정적인 UUID로 교체해 SwiftUI 레이아웃 재측정 루프를 차단
 - **이미지 포맷 보존** (2026-03-14) — PNG 이미지가 JPEG로 잘못 전송되어 Bedrock API 에러가 발생하던 문제 수정
 

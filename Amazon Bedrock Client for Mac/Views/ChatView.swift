@@ -191,50 +191,48 @@ struct ChatView: View {
     // MARK: - Message Scroll View
 
     private var messageScrollView: some View {
-        GeometryReader { outerGeo in
-            ScrollViewReader { proxy in
-                ZStack {
-                    scrollableMessageList(outerGeo: outerGeo, proxy: proxy)
-                    scrollToBottomButton(proxy: proxy)
-                }
-                .onChange(of: searchResult) { _, newResult in
-                    jumpToFirstMatch(newResult, proxy: proxy)
-                }
-                .onChange(of: currentMatchIndex) { _, idx in
-                    jumpToMatchIndex(idx, proxy: proxy)
-                }
+        ScrollViewReader { proxy in
+            ZStack {
+                scrollableMessageList(proxy: proxy)
+                scrollToBottomButton(proxy: proxy)
+            }
+            .onChange(of: searchResult) { _, newResult in
+                jumpToFirstMatch(newResult, proxy: proxy)
+            }
+            .onChange(of: currentMatchIndex) { _, idx in
+                jumpToMatchIndex(idx, proxy: proxy)
             }
         }
     }
 
     private func scrollableMessageList(
-        outerGeo: GeometryProxy,
         proxy: ScrollViewProxy
     ) -> some View {
         ScrollView {
-            LazyVStack(spacing: 2) {
-                ForEach(Array(viewModel.messages.enumerated()), id: \.element.id) { idx, message in
-                    MessageView(
-                        message: message,
-                        searchResult: getSearchResultForMessage(idx),
-                        adjustedFontSize: CGFloat(adjustedFontSize)
-                    )
-                    .id(idx)
-                    .frame(maxWidth: .infinity)
-                }
-            }
-            .padding()
-            .background(
-                GeometryReader { contentGeo in
-                    Color.clear
-                        .preference(
-                            key: ScrollOffsetPreferenceKey.self,
-                            value: contentGeo.frame(in: .named("chatScroll")).maxY
+            VStack(spacing: 0) {
+                LazyVStack(spacing: 2) {
+                    ForEach(Array(viewModel.messages.enumerated()), id: \.element.id) { idx, message in
+                        MessageView(
+                            message: message,
+                            searchResult: getSearchResultForMessage(idx),
+                            adjustedFontSize: CGFloat(adjustedFontSize)
                         )
+                        .id(idx)
+                        .frame(maxWidth: .infinity)
+                    }
                 }
-            )
+                .padding()
+                // Bottom sentinel lives outside the LazyVStack so its
+                // appearance/disappearance does not invalidate the lazy stack's
+                // measurement cache. Replaces a GeometryReader+preference
+                // pattern that re-fired on every layout pass and pinned the
+                // main thread when many WKWebViews settled their heights.
+                Color.clear
+                    .frame(height: 1)
+                    .onAppear { isAtBottom = true }
+                    .onDisappear { isAtBottom = false }
+            }
         }
-        .coordinateSpace(name: "chatScroll")
         .defaultScrollAnchor(.bottom)
         .modifier(ScrollEdgeEffectModifier())
         .onAppear {
@@ -251,9 +249,6 @@ struct ChatView: View {
                 scrollMonitor = nil
             }
             scrollThrottleTask?.cancel()
-        }
-        .onPreferenceChange(ScrollOffsetPreferenceKey.self) { maxY in
-            isAtBottom = maxY < outerGeo.size.height + 50
         }
         .onChange(of: viewModel.messages) { _, newMessages in
             // Re-enable auto-scroll when the user sends a new message, regardless of prior scroll state.
@@ -649,12 +644,5 @@ struct ChatView: View {
                 self.viewModel.sendMessage()
             }
         }
-    }
-}
-
-private struct ScrollOffsetPreferenceKey: PreferenceKey {
-    nonisolated(unsafe) static var defaultValue: CGFloat = .zero
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-        value = nextValue()
     }
 }

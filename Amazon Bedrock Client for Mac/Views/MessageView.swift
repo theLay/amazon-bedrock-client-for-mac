@@ -1187,6 +1187,7 @@ struct HTMLStringView: NSViewRepresentable {
         var searchRanges: [NSRange] = []
         var lastLoadedContent: String = "" // Track last loaded content to prevent unnecessary reloads
         var lastRawHTMLContent: String = "" // Skip wrapHTMLContent/addSearchHighlights when inputs are unchanged
+        var lastReportedHeight: CGFloat = -1 // Skip @State writes when content height is unchanged
         private var scrollToMatchNotification: AnyCancellable?
         
         init(_ parent: HTMLStringView) {
@@ -1292,10 +1293,14 @@ struct HTMLStringView: NSViewRepresentable {
                 }
                 getContentHeight();
             """) { (result, error) in
-                if let height = result as? CGFloat {
-                    DispatchQueue.main.async {
-                        self.parent.dynamicHeight = height
-                    }
+                guard let height = result as? CGFloat else { return }
+                // Skip writing @State when the height is essentially unchanged.
+                // Tiny sub-pixel differences from layout passes can otherwise
+                // re-enter the LazyVStack measurement loop and pin main thread.
+                if abs(height - self.lastReportedHeight) < 1.0 { return }
+                self.lastReportedHeight = height
+                DispatchQueue.main.async {
+                    self.parent.dynamicHeight = height
                 }
             }
         }
