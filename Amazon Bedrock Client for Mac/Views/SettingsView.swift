@@ -567,9 +567,9 @@ struct ServerRow: View {
                         .padding(.vertical, 2)
                         .background(
                             RoundedRectangle(cornerRadius: 4)
-                                .fill(server.transportType == .http ? Color.blue.opacity(0.15) : Color.gray.opacity(0.15))
+                                .fill(server.transportType == .http ? Color.accentColor.opacity(0.15) : Color.gray.opacity(0.15))
                         )
-                        .foregroundStyle(server.transportType == .http ? .blue : .secondary)
+                        .foregroundStyle(server.transportType == .http ? Color.accentColor : .secondary)
                 }
                 
                 if server.transportType == .stdio {

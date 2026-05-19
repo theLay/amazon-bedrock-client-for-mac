@@ -97,12 +97,12 @@ struct ImagePreviewModal: View {
             HStack(spacing: 10) {
                 ZStack {
                     RoundedRectangle(cornerRadius: 8)
-                        .fill(Color.blue.opacity(0.15))
+                        .fill(Color.accentColor.opacity(0.15))
                         .frame(width: 36, height: 36)
-                    
+
                     Image(systemName: "photo")
                         .font(.system(size: 16, weight: .medium))
-                        .foregroundColor(.blue)
+                        .foregroundColor(.accentColor)
                 }
                 
                 VStack(alignment: .leading, spacing: 2) {

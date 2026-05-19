@@ -27,7 +27,7 @@ struct TitanImageConfigDropdown: View {
             HStack(spacing: 8) {
                 Image(systemName: selectedTaskType.icon)
                     .font(.system(size: 14))
-                    .foregroundColor(.blue)
+                    .foregroundColor(.accentColor)
                 
                 Text(selectedTaskType.displayName)
                     .font(.system(size: 13, weight: .medium))
@@ -42,7 +42,7 @@ struct TitanImageConfigDropdown: View {
             .padding(.horizontal, 12)
             .padding(.vertical, 6)
             .contentShape(Rectangle())
-            .modifier(ImageConfigDropdownModifier(isHovering: isHovering, colorScheme: colorScheme, accentColor: .blue))
+            .modifier(ImageConfigDropdownModifier(isHovering: isHovering, colorScheme: colorScheme, accentColor: .accentColor))
         }
         .buttonStyle(PlainButtonStyle())
         .onHover { hovering in
@@ -80,7 +80,7 @@ struct TitanImageConfigPopoverContent: View {
                 Spacer()
                 Button("Reset") { resetToDefaults() }
                     .font(.system(size: 12))
-                    .foregroundColor(.blue)
+                    .foregroundColor(.accentColor)
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
@@ -201,7 +201,7 @@ struct TitanImageConfigPopoverContent: View {
                             Button(action: { seed = 0; saveConfig() }) {
                                 Image(systemName: "dice")
                                     .font(.system(size: 12))
-                                    .foregroundColor(seed == 0 ? .blue : .secondary)
+                                    .foregroundColor(seed == 0 ? Color.accentColor : .secondary)
                             }
                             .buttonStyle(.plain)
                             .help("0 = Random seed")
@@ -271,36 +271,36 @@ struct TitanTaskTypeRow: View {
         HStack(spacing: 10) {
             Image(systemName: taskType.icon)
                 .font(.system(size: 16))
-                .foregroundColor(isSelected ? .blue : .secondary)
+                .foregroundColor(isSelected ? Color.accentColor : .secondary)
                 .frame(width: 32, height: 32)
                 .background(
                     RoundedRectangle(cornerRadius: 6)
-                        .fill(isSelected ? Color.blue.opacity(0.15) : Color.gray.opacity(0.1))
+                        .fill(isSelected ? Color.accentColor.opacity(0.15) : Color.gray.opacity(0.1))
                 )
-            
+
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
                     Text(taskType.displayName)
                         .font(.system(size: 13, weight: .medium))
-                    
+
                     if isSelected {
                         Image(systemName: "checkmark")
-                            .foregroundColor(.blue)
+                            .foregroundColor(.accentColor)
                             .font(.system(size: 10, weight: .bold))
                     }
                 }
-                
+
                 Text(taskType.taskDescription)
                     .font(.system(size: 11))
                     .foregroundColor(.secondary)
             }
-            
+
             Spacer()
-            
+
             if taskType.requiresInputImage {
                 Image(systemName: "photo.badge.plus")
                     .font(.system(size: 11))
-                    .foregroundColor(Color.blue.opacity(0.7))
+                    .foregroundColor(Color.accentColor.opacity(0.7))
             }
         }
         .padding(.horizontal, 12)
@@ -308,7 +308,7 @@ struct TitanTaskTypeRow: View {
         .background(
             RoundedRectangle(cornerRadius: 6)
                 .fill(isSelected ?
-                      Color.blue.opacity(colorScheme == .dark ? 0.15 : 0.08) :
+                      Color.accentColor.opacity(colorScheme == .dark ? 0.15 : 0.08) :
                         (isHovering ? Color.gray.opacity(0.08) : Color.clear))
         )
         .contentShape(Rectangle())
@@ -356,9 +356,9 @@ struct TitanSizePresetButton: View {
                 .padding(.vertical, 4)
                 .background(
                     RoundedRectangle(cornerRadius: 4)
-                        .fill(isSelected ? Color.blue.opacity(0.2) : Color.gray.opacity(0.1))
+                        .fill(isSelected ? Color.accentColor.opacity(0.2) : Color.gray.opacity(0.1))
                 )
-                .foregroundColor(isSelected ? .blue : .secondary)
+                .foregroundColor(isSelected ? Color.accentColor : .secondary)
         }
         .buttonStyle(.plain)
     }
@@ -395,7 +395,7 @@ struct TitanDropdownModifier: ViewModifier {
                               Color(NSColor.controlBackgroundColor))
                         .overlay(
                             RoundedRectangle(cornerRadius: 8)
-                                .stroke(isHovering ? Color.blue.opacity(0.5) : Color.gray.opacity(0.2), lineWidth: 1)
+                                .stroke(isHovering ? Color.accentColor.opacity(0.5) : Color.gray.opacity(0.2), lineWidth: 1)
                         )
                         .shadow(color: Color.black.opacity(isHovering ? 0.1 : 0.05), radius: isHovering ? 3 : 2, x: 0, y: 1)
                 )

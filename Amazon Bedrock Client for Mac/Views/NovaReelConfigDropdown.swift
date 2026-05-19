@@ -94,14 +94,14 @@ struct NovaReelConfigPopoverContent: View {
                     // Info banner
                     HStack(spacing: 8) {
                         Image(systemName: "info.circle.fill")
-                            .foregroundColor(.blue)
+                            .foregroundColor(.accentColor)
                         Text("Videos are saved to S3. Generation takes ~90s per 6s.")
                             .font(.system(size: 11))
                             .foregroundColor(.secondary)
                     }
                     .padding(.horizontal, 12)
                     .padding(.vertical, 10)
-                    .background(Color.blue.opacity(0.1))
+                    .background(Color.accentColor.opacity(0.1))
                     .cornerRadius(8)
                     .padding(.horizontal, 12)
                     .padding(.top, 12)

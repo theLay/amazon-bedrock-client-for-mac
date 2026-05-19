@@ -36,15 +36,15 @@ struct InferenceConfigDropdown: View {
                 Image(systemName: "slider.horizontal.3")
                     .font(.system(size: 14))
                     .symbolRenderingMode(.hierarchical)
-                    .foregroundStyle(currentConfig.overrideDefault ? .blue : .secondary)
-                
+                    .foregroundStyle(currentConfig.overrideDefault ? Color.accentColor : .secondary)
+
                 Text("Config")
                     .font(.system(size: 13, weight: .medium))
-                    .foregroundColor(currentConfig.overrideDefault ? .blue : .secondary)
-                
+                    .foregroundColor(currentConfig.overrideDefault ? Color.accentColor : .secondary)
+
                 if currentConfig.overrideDefault {
                     Circle()
-                        .fill(Color.blue)
+                        .fill(Color.accentColor)
                         .frame(width: 6, height: 6)
                 }
             }
@@ -240,13 +240,13 @@ struct InferenceConfigPopoverContent: View {
                         settingManager.setInferenceConfig(newConfig, for: modelId)
                     }
                 ))
-                .toggleStyle(SwitchToggleStyle(tint: .blue))
+                .toggleStyle(SwitchToggleStyle(tint: Color.accentColor))
                 .scaleEffect(0.8)
             }
             .padding(.horizontal, 16)
         }
     }
-    
+
     // MARK: - Configuration Controls Section
     private var configurationControlsSection: some View {
         VStack(spacing: 0) {
@@ -354,14 +354,14 @@ struct InferenceConfigPopoverContent: View {
                     if isEditingMaxTokens {
                         TextField("", text: $tempMaxTokens)
                             .font(.system(size: 13, weight: .semibold))
-                            .foregroundColor(.blue)
+                            .foregroundColor(.accentColor)
                             .padding(.horizontal, 8)
                             .padding(.vertical, 2)
-                            .background(Color.blue.opacity(0.1))
+                            .background(Color.accentColor.opacity(0.1))
                             .clipShape(RoundedRectangle(cornerRadius: 4))
                             .overlay(
                                 RoundedRectangle(cornerRadius: 4)
-                                    .stroke(Color.blue, lineWidth: 1)
+                                    .stroke(Color.accentColor, lineWidth: 1)
                             )
                             .frame(width: 80)
                             .onSubmit {
@@ -373,10 +373,10 @@ struct InferenceConfigPopoverContent: View {
                     } else {
                         Text("\(config.maxTokens)")
                             .font(.system(size: 13, weight: .semibold))
-                            .foregroundColor(.blue)
+                            .foregroundColor(.accentColor)
                             .padding(.horizontal, 8)
                             .padding(.vertical, 2)
-                            .background(Color.blue.opacity(0.1))
+                            .background(Color.accentColor.opacity(0.1))
                             .clipShape(RoundedRectangle(cornerRadius: 4))
                             .onTapGesture(count: 2) {
                                 withAnimation(.easeInOut(duration: 0.2)) {
@@ -401,7 +401,7 @@ struct InferenceConfigPopoverContent: View {
                 ),
                 range: Float(range.maxTokensRange.lowerBound)...Float(range.maxTokensRange.upperBound),
                 step: range.maxTokensRange.upperBound > 8192 ? 512 : 256,
-                color: .blue
+                color: .accentColor
             )
         }
     }
@@ -714,10 +714,10 @@ struct InferenceConfigPopoverContent: View {
                         settingManager.setInferenceConfig(newConfig, for: modelId)
                     }
                 ))
-                .toggleStyle(SwitchToggleStyle(tint: .blue))
+                .toggleStyle(SwitchToggleStyle(tint: Color.accentColor))
                 .scaleEffect(0.8)
             }
-            
+
             Text("Controls whether the model responses are streamed in real-time or returned as a single response")
                 .font(.system(size: 10))
                 .foregroundColor(.secondary)

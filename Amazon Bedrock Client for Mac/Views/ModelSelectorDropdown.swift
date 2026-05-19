@@ -310,7 +310,7 @@ struct EnhancedModelRowView: View {
                     
                     if isSelected {
                         Image(systemName: "checkmark")
-                            .foregroundColor(.blue)
+                            .foregroundColor(.accentColor)
                             .font(.system(size: 10, weight: .bold))
                     }
                 }
@@ -336,12 +336,12 @@ struct EnhancedModelRowView: View {
         .background(
             RoundedRectangle(cornerRadius: 6)
                 .fill(isSelected ?
-                      Color.blue.opacity(colorScheme == .dark ? 0.2 : 0.1) :
+                      Color.accentColor.opacity(colorScheme == .dark ? 0.2 : 0.1) :
                         (isHovering ? Color.gray.opacity(0.1) : Color.clear))
         )
         .overlay(
             RoundedRectangle(cornerRadius: 6)
-                .stroke(isSelected ? Color.blue.opacity(0.3) : Color.clear, lineWidth: 1)
+                .stroke(isSelected ? Color.accentColor.opacity(0.3) : Color.clear, lineWidth: 1)
         )
         .contentShape(Rectangle())
         .onHover { hovering in
@@ -421,7 +421,7 @@ struct LiquidGlassDropdownModifier: ViewModifier {
                               Color(NSColor.controlBackgroundColor))
                         .overlay(
                             RoundedRectangle(cornerRadius: 8)
-                                .stroke(isHovering ? Color.blue.opacity(0.5) : Color.gray.opacity(0.2), lineWidth: 1)
+                                .stroke(isHovering ? Color.accentColor.opacity(0.5) : Color.gray.opacity(0.2), lineWidth: 1)
                         )
                         .shadow(color: Color.black.opacity(isHovering ? 0.1 : 0.05), radius: isHovering ? 3 : 2, x: 0, y: 1)
                 )

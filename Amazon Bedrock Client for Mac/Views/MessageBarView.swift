@@ -950,7 +950,7 @@ struct MediaAttachmentView: View {
             }
             .overlay(
                 RoundedRectangle(cornerRadius: 6)
-                    .stroke(Color.blue.opacity(0.2), lineWidth: 1)
+                    .stroke(Color.accentColor.opacity(0.2), lineWidth: 1)
             )
             .overlay(
                 Button(action: onDelete) {

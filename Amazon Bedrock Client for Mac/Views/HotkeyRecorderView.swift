@@ -29,11 +29,11 @@ struct HotkeyRecorderView: View {
                     .frame(minWidth: 120)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 4)
-                    .background(isRecording ? Color.blue.opacity(0.2) : Color.gray.opacity(0.1))
+                    .background(isRecording ? Color.accentColor.opacity(0.2) : Color.gray.opacity(0.1))
                     .cornerRadius(6)
                     .overlay(
                         RoundedRectangle(cornerRadius: 6)
-                            .stroke(isRecording ? Color.blue : Color.gray.opacity(0.3), lineWidth: 1)
+                            .stroke(isRecording ? Color.accentColor : Color.gray.opacity(0.3), lineWidth: 1)
                     )
             }
             .buttonStyle(PlainButtonStyle())
