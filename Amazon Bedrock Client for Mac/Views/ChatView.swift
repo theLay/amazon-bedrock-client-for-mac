@@ -22,6 +22,7 @@ struct ChatView: View {
     @State private var autoScrollEnabled: Bool = true
     @State private var scrollMonitor: Any?
     @State private var scrollThrottleTask: Task<Void, Never>?
+    @State private var bottomSentinelTask: Task<Void, Never>?
     
     // Font size adjustment state
     @AppStorage("adjustedFontSize") private var adjustedFontSize: Int = -1
@@ -229,8 +230,20 @@ struct ChatView: View {
                 // main thread when many WKWebViews settled their heights.
                 Color.clear
                     .frame(height: 1)
-                    .onAppear { isAtBottom = true }
-                    .onDisappear { isAtBottom = false }
+                    .onAppear {
+                        bottomSentinelTask?.cancel()
+                        bottomSentinelTask = Task {
+                            try? await Task.sleep(nanoseconds: 50_000_000)
+                            isAtBottom = true
+                        }
+                    }
+                    .onDisappear {
+                        bottomSentinelTask?.cancel()
+                        bottomSentinelTask = Task {
+                            try? await Task.sleep(nanoseconds: 50_000_000)
+                            isAtBottom = false
+                        }
+                    }
             }
         }
         .defaultScrollAnchor(.bottom)
@@ -273,46 +286,44 @@ struct ChatView: View {
     }
 
     private func scrollToBottomButton(proxy: ScrollViewProxy) -> some View {
-        Group {
-            if !isAtBottom {
-                VStack {
-                    Spacer()
-                    HStack {
-                        Spacer()
-                        Button {
-                            withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
-                                if let lastIdx = viewModel.messages.indices.last {
-                                    proxy.scrollTo(lastIdx, anchor: .bottom)
-                                }
-                                autoScrollEnabled = true
-                            }
-                        } label: {
-                            Image(systemName: "arrow.down")
-                                .font(.system(size: 14, weight: .medium))
-                                .foregroundStyle(.primary)
-                                .frame(width: 32, height: 32)
-                                .background(
-                                    Circle()
-                                        .fill(colorScheme == .dark ?
-                                              Color(NSColor.windowBackgroundColor).opacity(0.9) :
-                                                Color.white.opacity(0.98))
-                                        .shadow(color: .black.opacity(0.15), radius: 4, x: 0, y: 2)
-                                )
-                                .overlay(
-                                    Circle()
-                                        .strokeBorder(Color.gray.opacity(0.2), lineWidth: 0.5)
-                                )
+        VStack {
+            Spacer()
+            HStack {
+                Spacer()
+                Button {
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                        if let lastIdx = viewModel.messages.indices.last {
+                            proxy.scrollTo(lastIdx, anchor: .bottom)
                         }
-                        .buttonStyle(PlainButtonStyle())
-                        .contentShape(Circle())
-                        .shadow(color: .black.opacity(0.1), radius: 2, x: 0, y: 1)
-                        Spacer()
+                        autoScrollEnabled = true
                     }
-                    .padding(.bottom, 16)
+                } label: {
+                    Image(systemName: "arrow.down")
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundStyle(.primary)
+                        .frame(width: 32, height: 32)
+                        .background(
+                            Circle()
+                                .fill(colorScheme == .dark ?
+                                      Color(NSColor.windowBackgroundColor).opacity(0.9) :
+                                        Color.white.opacity(0.98))
+                                .shadow(color: .black.opacity(0.15), radius: 4, x: 0, y: 2)
+                        )
+                        .overlay(
+                            Circle()
+                                .strokeBorder(Color.gray.opacity(0.2), lineWidth: 0.5)
+                        )
                 }
-                .transition(.opacity.combined(with: .scale(scale: 0.9)))
+                .buttonStyle(PlainButtonStyle())
+                .contentShape(Circle())
+                .shadow(color: .black.opacity(0.1), radius: 2, x: 0, y: 1)
+                Spacer()
             }
+            .padding(.bottom, 16)
         }
+        .opacity(isAtBottom ? 0 : 1)
+        .allowsHitTesting(!isAtBottom)
+        .animation(.easeInOut(duration: 0.2), value: isAtBottom)
     }
     
     private var messageBarView: some View {
