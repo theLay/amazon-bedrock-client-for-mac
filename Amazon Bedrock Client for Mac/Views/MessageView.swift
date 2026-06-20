@@ -18,23 +18,28 @@ struct LazyMarkdownView: View {
     let searchRanges: [NSRange]
     @State private var height: CGFloat = .zero
     @State private var cachedHTML: String
+    @Environment(\.scenePhase) private var scenePhase
 
     init(text: String, fontSize: CGFloat, searchRanges: [NSRange] = []) {
         self.text = text
         self.fontSize = fontSize
         self.searchRanges = searchRanges
-        // Parse once at view identity creation; `height` changes re-evaluate body
-        // but must not re-run the parser, which was causing a layout feedback loop.
         self._cachedHTML = State(initialValue: Self.generateHTML(from: text))
     }
 
     var body: some View {
-        HTMLStringView(
-            htmlContent: cachedHTML,
-            fontSize: fontSize,
-            searchRanges: searchRanges,
-            dynamicHeight: $height
-        )
+        Group {
+            if scenePhase == .active {
+                HTMLStringView(
+                    htmlContent: cachedHTML,
+                    fontSize: fontSize,
+                    searchRanges: searchRanges,
+                    dynamicHeight: $height
+                )
+            } else {
+                Color.clear
+            }
+        }
         .frame(height: height)
         .onChange(of: text) { _, newText in
             cachedHTML = Self.generateHTML(from: newText)
