@@ -42,7 +42,19 @@ struct ModelInferenceRange {
         let modelType = getModelTypeFromId(modelId)
         
         switch modelType {
-        case .claudeOpus47:
+        case .claudeFable5:
+            return ModelInferenceRange(
+                maxTokensRange: 1...128000,
+                temperatureRange: 0.0...0.0,
+                topPRange: 0.01...1.0,
+                thinkingBudgetRange: 1024...32768,
+                defaultMaxTokens: 16384,
+                defaultTemperature: 0.0,
+                defaultTopP: 0.0,
+                defaultThinkingBudget: 8192,
+                defaultReasoningEffort: "medium"
+            )
+        case .claudeOpus47, .claudeOpus48:
             return ModelInferenceRange(
                 maxTokensRange: 1...64000,
                 temperatureRange: 0.0...0.0,
@@ -383,7 +395,11 @@ struct ModelInferenceRange {
         
         switch provider {
         case "anthropic":
-            if modelNameAndVersion.contains("claude-opus-4-7") {
+            if modelNameAndVersion.contains("claude-fable-5") {
+                return .claudeFable5
+            } else if modelNameAndVersion.contains("claude-opus-4-8") {
+                return .claudeOpus48
+            } else if modelNameAndVersion.contains("claude-opus-4-7") {
                 return .claudeOpus47
             } else if modelNameAndVersion.contains("claude-sonnet-4-6") {
                 return .claudeSonnet46
